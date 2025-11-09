@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VOIP Audio Effect Simulator (Opus for CELT)</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+        input, button { margin: 10px 0; }
+        #status { color: green; }
+        #error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>VOIP Chat Audio Effect (TF2/CS:S with Opus simulating CELT)</h1>
+    <p>Upload an MP3 file, and this tool will process it using the Opus codec to mimic later Source Engine VOIP sound: resampled to 22kHz mono, encoded/decoded with Opus for authentic compression artifacts (~22kbps, low-delay mode). Preview and download as WAV.</p>
+    
+    <input type="file" id="fileInput" accept="audio/mp3">
+    <button id="processBtn">Process Audio</button>
+    <p id="status"></p>
+    <p id="error"></p>
+    
+    <audio id="preview" controls></audio>
+    <a id="downloadLink" style="display: none;">Download Processed Audio (WAV)</a>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const processBtn = document.getElementById('processBtn');
+        const status = document.getElementById('status');
+        const error = document.getElementById('error');
+        const preview = document.getElementById('preview');
+        const downloadLink = document.getElementById('downloadLink');
+
+        processBtn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) {
+                error.textContent = 'Please select an MP3 file.';
+                return;
+            }
+            status.textContent = 'Processing...';
+            error.textContent = '';
+
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const arrayBuffer = await file.arrayBuffer();
+                let audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+                // Convert to mono if needed
+                audioBuffer = toMono(audioBuffer);
+
+                // Resample to 22kHz mono offline
+                const targetSampleRate = 22050;
+                const newLength = Math.ceil(audioBuffer.length * targetSampleRate / audioBuffer.sampleRate);
+                const offlineCtx = new OfflineAudioContext(1, newLength, targetSampleRate);
+                const source = offlineCtx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(offlineCtx.destination);
+                source.start();
+                const renderedBuffer = await offlineCtx.startRendering();
+
+                // Get PCM as Float32Array
+                const samples = renderedBuffer.getChannelData(0);
+
+                // Set up encoder worker for offline encoding
+                const worker = new Worker('encoderWorker.min.js');
+                const pages = [];
+                let resolveDone;
+                const donePromise = new Promise((resolve) => { resolveDone = resolve; });
+
+                worker.onmessage = (e) => {
+                    if (e.data.message === 'done') {
+                        resolveDone();
+                    } else {
+                        pages.push(e.data.buf);
+                    }
+                };
+
+                const bufferLength = 4096; // Chunk size for encoding
+
+                // Init worker
+                worker.postMessage({
+                    command: 'init',
+                    encoderSampleRate: 48000, // Opus internal rate
+                    originalSampleRate: targetSampleRate,
+                    numberOfChannels: 1,
+                    encoderApplication: 2051, // Restricted low-delay (CELT mode)
+                    encoderFrameSize: 20, // ms
+                    encoderBitRate: 22000,
+                    encoderComplexity: 4, // Lower for more artifacts
+                    resampleQuality: 10,
+                    bufferLength: bufferLength
+                });
+
+                // Get Ogg headers
+                worker.postMessage({ command: 'getHeaderPages' });
+
+                // Encode chunks
+                const chunkSize = bufferLength;
+                for (let i = 0; i < samples.length; i += chunkSize) {
+                    const chunk = samples.subarray(i, i + chunkSize);
+                    worker.postMessage({
+                        command: 'encode',
+                        buffers: [chunk]
+                    });
+                }
+
+                // Finish encoding
+                worker.postMessage({ command: 'done' });
+
+                // Wait for 'done' signal
+                await donePromise;
+
+                // Concat all pages (headers + data) into Uint8Array
+                const encodedArray = concatTypedArrays(pages);
+
+                // Create Ogg Opus blob
+                const encodedBlob = new Blob([encodedArray], { type: 'audio/ogg' });
+
+                // Decode back to AudioBuffer for round-trip artifacts
+                const decodedArrayBuffer = await encodedBlob.arrayBuffer();
+                const decodedBuffer = await audioCtx.decodeAudioData(decodedArrayBuffer);
+
+                // Preview
+                const wavBlob = await audioBufferToWav(decodedBuffer);
+                const url = URL.createObjectURL(wavBlob);
+                preview.src = url;
+                preview.style.display = 'block';
+
+                // Download link
+                downloadLink.href = url;
+                downloadLink.download = 'processed_voip_audio.wav';
+                downloadLink.textContent = 'Download Processed Audio (WAV)';
+                downloadLink.style.display = 'block';
+
+                status.textContent = 'Processing complete! Preview below and download.';
+            } catch (err) {
+                error.textContent = 'Error processing audio: ' + err.message;
+                status.textContent = '';
+            }
+        });
+
+        // Helper: Concat Uint8Array pages
+        function concatTypedArrays(arrays) {
+            let totalLength = arrays.reduce((acc, val) => acc + val.length, 0);
+            let result = new Uint8Array(totalLength);
+            let offset = 0;
+            for (let arr of arrays) {
+                result.set(arr, offset);
+                offset += arr.length;
+            }
+            return result;
+        }
+
+        // Helper: Convert stereo to mono (unchanged)
+        function toMono(buffer) {
+            if (buffer.numberOfChannels === 1) return buffer;
+            const monoBuffer = new AudioBuffer({
+                length: buffer.length,
+                numberOfChannels: 1,
+                sampleRate: buffer.sampleRate
+            });
+            const left = buffer.getChannelData(0);
+            const right = buffer.getChannelData(1);
+            const monoData = monoBuffer.getChannelData(0);
+            for (let i = 0; i < buffer.length; i++) {
+                monoData[i] = (left[i] + right[i]) / 2;
+            }
+            return monoBuffer;
+        }
+
+        // Helper: Convert AudioBuffer to WAV Blob (unchanged)
+        function audioBufferToWav(buffer) {
+            return new Promise((resolve) => {
+                const numChannels = buffer.numberOfChannels;
+                const sampleRate = buffer.sampleRate;
+                const length = buffer.length * numChannels * 2 + 44;
+                const wavBuffer = new ArrayBuffer(length);
+                const view = new DataView(wavBuffer);
+
+                // RIFF chunk
+                writeString(view, 0, 'RIFF');
+                view.setUint32(4, 36 + buffer.length * numChannels * 2, true);
+                writeString(view, 8, 'WAVE');
+                // FMT sub-chunk
+                writeString(view, 12, 'fmt ');
+                view.setUint32(16, 16, true);
+                view.setUint16(20, 1, true); // PCM
+                view.setUint16(22, numChannels, true);
+                view.setUint32(24, sampleRate, true);
+                view.setUint32(28, sampleRate * numChannels * 2, true);
+                view.setUint16(32, numChannels * 2, true);
+                view.setUint16(34, 16, true); // 16-bit
+                // Data sub-chunk
+                writeString(view, 36, 'data');
+                view.setUint32(40, buffer.length * numChannels * 2, true);
+
+                // Write samples
+                let offset = 44;
+                for (let i = 0; i < buffer.length; i++) {
+                    for (let channel = 0; channel < numChannels; channel++) {
+                        const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]));
+                        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+                        offset += 2;
+                    }
+                }
+
+                resolve(new Blob([wavBuffer], { type: 'audio/wav' }));
+            });
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+    </script>
+</body>
+</html>
