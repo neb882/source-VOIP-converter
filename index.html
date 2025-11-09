@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VOIP Audio Effect Simulator (Opus for CELT)</title>
+    <title>VOIP Audio Effect Simulator (Speex Codec)</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
         input, button { margin: 10px 0; }
@@ -12,8 +12,8 @@
     </style>
 </head>
 <body>
-    <h1>VOIP Chat Audio Effect (TF2/CS:S with Opus simulating CELT)</h1>
-    <p>Upload an MP3 file, and this tool will process it using the Opus codec to mimic later Source Engine VOIP sound: resampled to 24kHz mono, encoded/decoded with Opus for authentic compression artifacts (~22kbps, low-delay mode). Preview and download as WAV.</p>
+    <h1>VOIP Chat Audio Effect (TF2/CS:S with Speex)</h1>
+    <p>Upload an MP3 file, and this tool will process it using the Speex codec to mimic the older Source Engine VOIP sound: resampled to 8kHz mono, encoded/decoded with Speex for authentic compression artifacts. Preview and download as WAV (convert to MP3 if needed).</p>
     
     <input type="file" id="fileInput" accept="audio/mp3">
     <button id="processBtn">Process Audio</button>
@@ -23,6 +23,9 @@
     <audio id="preview" controls></audio>
     <a id="downloadLink" style="display: none;">Download Processed Audio (WAV)</a>
 
+    <!-- New: Include the audiorecorder library (download audiorecorder.min.js and worker.min.js from https://github.com/dbieber/audiorecorder) -->
+    <script src="audiorecorder.min.js"></script>
+
     <script>
         const fileInput = document.getElementById('fileInput');
         const processBtn = document.getElementById('processBtn');
@@ -30,6 +33,9 @@
         const error = document.getElementById('error');
         const preview = document.getElementById('preview');
         const downloadLink = document.getElementById('downloadLink');
+
+        // New: Initialize the AudioRecorder library (even though we're not recording, it sets up the Codec)
+        AudioRecorder.init({ worker_path: 'worker.min.js' });
 
         processBtn.addEventListener('click', async () => {
             const file = fileInput.files[0];
@@ -43,92 +49,38 @@
             try {
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 const arrayBuffer = await file.arrayBuffer();
-                let audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 
-                // Convert to mono if needed
-                audioBuffer = toMono(audioBuffer);
-
-                // Resample to 24kHz mono offline
-                const targetSampleRate = 24000;
+                // New: Target 8kHz for Speex narrowband (Source VOIP style)
+                const targetSampleRate = 8000;
                 const newLength = Math.ceil(audioBuffer.length * targetSampleRate / audioBuffer.sampleRate);
-                const offlineCtx = new OfflineAudioContext(1, newLength, targetSampleRate);
+                const offlineCtx = new OfflineAudioContext(1, newLength, targetSampleRate); // Mono, 8kHz
+
+                // Source node with mono buffer
                 const source = offlineCtx.createBufferSource();
-                source.buffer = audioBuffer;
+                source.buffer = toMono(audioBuffer);
+
+                // Connect directly to destination (no filters needed, Speex will add artifacts)
                 source.connect(offlineCtx.destination);
+
+                // Render the resampled mono buffer
                 source.start();
                 const renderedBuffer = await offlineCtx.startRendering();
 
-                // Get PCM as Float32Array
+                // New: Get raw PCM samples (Float32Array)
                 const samples = renderedBuffer.getChannelData(0);
 
-                // Set up encoder worker for offline encoding
-                const worker = new Worker('encoderWorker.min.js');
-                const pages = [];
-                let resolveDone;
-                const donePromise = new Promise((resolve) => { resolveDone = resolve; });
+                // New: Encode to Speex, then decode back to simulate VOIP round-trip artifacts
+                const encoded = Codec.encode(samples);
+                const decodedSamples = Codec.decode(encoded);
 
-                worker.onmessage = (e) => {
-                    if (e.data.message === 'done') {
-                        resolveDone();
-                    } else {
-                        pages.push(e.data.buf);
-                    }
-                };
-
-                const frameSize = targetSampleRate * 0.02; // 480 for 20ms at 24kHz
-
-                // Init worker (no resampling needed)
-                worker.postMessage({
-                    command: 'init',
-                    encoderSampleRate: targetSampleRate,
-                    originalSampleRate: targetSampleRate,
-                    numberOfChannels: 1,
-                    encoderApplication: 2051, // Restricted low-delay (CELT mode)
-                    encoderFrameSize: 20, // ms
-                    encoderBitRate: 22000,
-                    encoderComplexity: 4, // Lower for more artifacts
-                    resampleQuality: 10,
-                    bufferLength: frameSize
-                });
-
-                // Get Ogg headers
-                worker.postMessage({ command: 'getHeaderPages' });
-
-                // Encode chunks, padding last if needed, and transfer buffer to avoid cloning
-                for (let i = 0; i < samples.length; i += frameSize) {
-                    let chunk = samples.subarray(i, i + frameSize);
-                    if (chunk.length < frameSize) {
-                        const padded = new Float32Array(frameSize);
-                        padded.set(chunk);
-                        chunk = padded; // Pad with zeros
-                    }
-                    if (chunk.length > 0) {
-                        worker.postMessage({
-                            command: 'encode',
-                            buffers: [chunk]
-                        }, [chunk.buffer]); // Transfer the buffer to prevent cloning and OOM
-                    }
-                }
-
-                // Finish encoding
-                worker.postMessage({ command: 'done' });
-
-                // Wait for 'done' signal
-                await donePromise;
-
-                // Concat all pages (headers + data) into Uint8Array
-                const encodedArray = concatTypedArrays(pages);
-
-                // Create Ogg Opus blob
-                const encodedBlob = new Blob([encodedArray], { type: 'audio/ogg' });
-
-                // Decode back to AudioBuffer for round-trip artifacts
-                const decodedArrayBuffer = await encodedBlob.arrayBuffer();
-                const decodedBuffer = await audioCtx.decodeAudioData(decodedArrayBuffer);
+                // New: Create a new AudioBuffer from decoded samples (at 8kHz mono)
+                const processedBuffer = offlineCtx.createBuffer(1, decodedSamples.length, targetSampleRate);
+                processedBuffer.getChannelData(0).set(decodedSamples);
 
                 // Preview
-                const wavBlob = await audioBufferToWav(decodedBuffer);
-                const url = URL.createObjectURL(wavBlob);
+                const blob = await audioBufferToWav(processedBuffer);
+                const url = URL.createObjectURL(blob);
                 preview.src = url;
                 preview.style.display = 'block';
 
@@ -144,18 +96,6 @@
                 status.textContent = '';
             }
         });
-
-        // Helper: Concat Uint8Array pages
-        function concatTypedArrays(arrays) {
-            let totalLength = arrays.reduce((acc, val) => acc + val.length, 0);
-            let result = new Uint8Array(totalLength);
-            let offset = 0;
-            for (let arr of arrays) {
-                result.set(arr, offset);
-                offset += arr.length;
-            }
-            return result;
-        }
 
         // Helper: Convert stereo to mono (unchanged)
         function toMono(buffer) {
