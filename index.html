@@ -13,7 +13,7 @@
 </head>
 <body>
     <h1>VOIP Chat Audio Effect (TF2/CS:S with Opus simulating CELT)</h1>
-    <p>Upload an MP3 file, and this tool will process it using the Opus codec to mimic later Source Engine VOIP sound: resampled to 22kHz mono, encoded/decoded with Opus for authentic compression artifacts (~22kbps, low-delay mode). Preview and download as WAV.</p>
+    <p>Upload an MP3 file, and this tool will process it using the Opus codec to mimic later Source Engine VOIP sound: resampled to 24kHz mono, encoded/decoded with Opus for authentic compression artifacts (~22kbps, low-delay mode). Preview and download as WAV.</p>
     
     <input type="file" id="fileInput" accept="audio/mp3">
     <button id="processBtn">Process Audio</button>
@@ -48,8 +48,8 @@
                 // Convert to mono if needed
                 audioBuffer = toMono(audioBuffer);
 
-                // Resample to 22kHz mono offline
-                const targetSampleRate = 22050;
+                // Resample to 24kHz mono offline
+                const targetSampleRate = 24000;
                 const newLength = Math.ceil(audioBuffer.length * targetSampleRate / audioBuffer.sampleRate);
                 const offlineCtx = new OfflineAudioContext(1, newLength, targetSampleRate);
                 const source = offlineCtx.createBufferSource();
@@ -75,12 +75,12 @@
                     }
                 };
 
-                const bufferLength = 4096; // Chunk size for encoding
+                const frameSize = targetSampleRate * 0.02; // 480 for 20ms at 24kHz
 
-                // Init worker
+                // Init worker (no resampling needed)
                 worker.postMessage({
                     command: 'init',
-                    encoderSampleRate: 48000, // Opus internal rate
+                    encoderSampleRate: targetSampleRate,
                     originalSampleRate: targetSampleRate,
                     numberOfChannels: 1,
                     encoderApplication: 2051, // Restricted low-delay (CELT mode)
@@ -88,20 +88,26 @@
                     encoderBitRate: 22000,
                     encoderComplexity: 4, // Lower for more artifacts
                     resampleQuality: 10,
-                    bufferLength: bufferLength
+                    bufferLength: frameSize
                 });
 
                 // Get Ogg headers
                 worker.postMessage({ command: 'getHeaderPages' });
 
-                // Encode chunks
-                const chunkSize = bufferLength;
-                for (let i = 0; i < samples.length; i += chunkSize) {
-                    const chunk = samples.subarray(i, i + chunkSize);
-                    worker.postMessage({
-                        command: 'encode',
-                        buffers: [chunk]
-                    });
+                // Encode chunks, padding last if needed
+                for (let i = 0; i < samples.length; i += frameSize) {
+                    let chunk = samples.subarray(i, i + frameSize);
+                    if (chunk.length < frameSize) {
+                        const padded = new Float32Array(frameSize);
+                        padded.set(chunk);
+                        chunk = padded; // Pad with zeros
+                    }
+                    if (chunk.length > 0) {
+                        worker.postMessage({
+                            command: 'encode',
+                            buffers: [chunk]
+                        });
+                    }
                 }
 
                 // Finish encoding
