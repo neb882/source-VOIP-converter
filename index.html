@@ -41,7 +41,7 @@
       <div class="control">
         <label>Target sample rate (Hz)</label>
         <div class="params">
-          <div class="param"><input id="sr" type="number" value="14000" min="8000" max="48000"><span class="small">24000 is commonly used for Steam voice.</span></div>
+          <div class="param"><input id="sr" type="number" value="12000" min="8000" max="48000"><span class="small">24000 is commonly used for Steam voice.</span></div>
         </div>
       </div>
 
@@ -186,7 +186,7 @@
         for (let i = 0; i < len; i++) outCh[i] = (outCh[i] || 0) + ch[i] / decoded.numberOfChannels;
       }
 
-      const targetRate = Number(document.getElementById('sr').value) || 14000;
+      const targetRate = Number(document.getElementById('sr').value) || 12000;
       const offline = new OfflineAudioContext(1, Math.ceil(mono.duration * targetRate), targetRate);
       const src = offline.createBufferSource();
       src.buffer = mono;
