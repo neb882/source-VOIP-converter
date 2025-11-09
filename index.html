@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VOIP Audio Effect Simulator (Speex Codec)</title>
+    <title>VOIP Audio Effect Simulator</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
         input, button { margin: 10px 0; }
@@ -12,8 +12,8 @@
     </style>
 </head>
 <body>
-    <h1>VOIP Chat Audio Effect (TF2/CS:S with Speex)</h1>
-    <p>Upload an MP3 file, and this tool will process it using the Speex codec to mimic the older Source Engine VOIP sound: resampled to 8kHz mono, encoded/decoded with Speex for authentic compression artifacts. Preview and download as WAV (convert to MP3 if needed).</p>
+    <h1>VOIP Chat Audio Effect (TF2/CS:S)</h1>
+    <p>Upload an MP3 file, and this tool will process it to mimic the older Source Engine VOIP sound: mono, downsampled to 11kHz, tighter band-limiting (high-pass ~100 Hz, low-pass ~4000 Hz), heavier compression to induce clipping, and stronger distortion for artifacts. Preview and download as WAV (convert to MP3 if needed).</p>
     
     <input type="file" id="fileInput" accept="audio/mp3">
     <button id="processBtn">Process Audio</button>
@@ -23,9 +23,6 @@
     <audio id="preview" controls></audio>
     <a id="downloadLink" style="display: none;">Download Processed Audio (WAV)</a>
 
-    <!-- New: Include the audiorecorder library (download audiorecorder.min.js and worker.min.js from https://github.com/dbieber/audiorecorder) -->
-    <script src="audiorecorder.min.js"></script>
-
     <script>
         const fileInput = document.getElementById('fileInput');
         const processBtn = document.getElementById('processBtn');
@@ -33,9 +30,6 @@
         const error = document.getElementById('error');
         const preview = document.getElementById('preview');
         const downloadLink = document.getElementById('downloadLink');
-
-        // New: Initialize the AudioRecorder library (even though we're not recording, it sets up the Codec)
-        AudioRecorder.init({ worker_path: 'worker.min.js' });
 
         processBtn.addEventListener('click', async () => {
             const file = fileInput.files[0];
@@ -51,35 +45,58 @@
                 const arrayBuffer = await file.arrayBuffer();
                 const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 
-                // New: Target 8kHz for Speex narrowband (Source VOIP style)
-                const targetSampleRate = 8000;
+                // Downsample to 11025 Hz for nostalgia (original Source VOIP clamped to ~11kHz)
+                const targetSampleRate = 11025;
                 const newLength = Math.ceil(audioBuffer.length * targetSampleRate / audioBuffer.sampleRate);
-                const offlineCtx = new OfflineAudioContext(1, newLength, targetSampleRate); // Mono, 8kHz
+                const offlineCtx = new OfflineAudioContext(1, newLength, targetSampleRate); // Mono, lower sample rate
 
                 // Source node with mono buffer
                 const source = offlineCtx.createBufferSource();
                 source.buffer = toMono(audioBuffer);
 
-                // Connect directly to destination (no filters needed, Speex will add artifacts)
-                source.connect(offlineCtx.destination);
+                // High-pass filter (~100 Hz to remove rumble)
+                const highpass = offlineCtx.createBiquadFilter();
+                highpass.type = 'highpass';
+                highpass.frequency.value = 100;
+                highpass.Q.value = 1;
 
-                // Render the resampled mono buffer
+                // Low-pass filter (~4000 Hz for narrowband speech)
+                const lowpass = offlineCtx.createBiquadFilter();
+                lowpass.type = 'lowpass';
+                lowpass.frequency.value = 4000;
+                lowpass.Q.value = 1;
+
+                // Compressor (more aggressive for clipping)
+                const compressor = offlineCtx.createDynamicsCompressor();
+                compressor.threshold.value = -12; // Lower threshold for more compression
+                compressor.knee.value = 30;
+                compressor.ratio.value = 20; // Higher ratio for limiting/clipping
+                compressor.attack.value = 0.003;
+                compressor.release.value = 0.25;
+
+                // Gain node to boost before distortion (induce more clipping/artifacts)
+                const gain = offlineCtx.createGain();
+                gain.gain.value = 1.5; // Boost by 3-4 dB
+
+                // Waveshaper for stronger distortion
+                const distortion = offlineCtx.createWaveShaper();
+                distortion.curve = makeDistortionCurve(3); // Increased amount for grittier sound
+                distortion.oversample = '4x';
+
+                // Connect nodes: source -> highpass -> lowpass -> compressor -> gain -> distortion -> destination
+                source.connect(highpass);
+                highpass.connect(lowpass);
+                lowpass.connect(compressor);
+                compressor.connect(gain);
+                gain.connect(distortion);
+                distortion.connect(offlineCtx.destination);
+
+                // Start rendering
                 source.start();
                 const renderedBuffer = await offlineCtx.startRendering();
 
-                // New: Get raw PCM samples (Float32Array)
-                const samples = renderedBuffer.getChannelData(0);
-
-                // New: Encode to Speex, then decode back to simulate VOIP round-trip artifacts
-                const encoded = Codec.encode(samples);
-                const decodedSamples = Codec.decode(encoded);
-
-                // New: Create a new AudioBuffer from decoded samples (at 8kHz mono)
-                const processedBuffer = offlineCtx.createBuffer(1, decodedSamples.length, targetSampleRate);
-                processedBuffer.getChannelData(0).set(decodedSamples);
-
                 // Preview
-                const blob = await audioBufferToWav(processedBuffer);
+                const blob = await audioBufferToWav(renderedBuffer);
                 const url = URL.createObjectURL(blob);
                 preview.src = url;
                 preview.style.display = 'block';
@@ -97,7 +114,7 @@
             }
         });
 
-        // Helper: Convert stereo to mono (unchanged)
+        // Helper: Convert stereo to mono
         function toMono(buffer) {
             if (buffer.numberOfChannels === 1) return buffer;
             const monoBuffer = new AudioBuffer({
@@ -114,7 +131,19 @@
             return monoBuffer;
         }
 
-        // Helper: Convert AudioBuffer to WAV Blob (unchanged)
+        // Helper: Create distortion curve
+        function makeDistortionCurve(amount) {
+            const samples = 44100;
+            const curve = new Float32Array(samples);
+            const deg = Math.PI / 180;
+            for (let i = 0; i < samples; ++i) {
+                const x = i * 2 / samples - 1;
+                curve[i] = (3 + amount) * x * 20 * deg / (Math.PI + amount * Math.abs(x));
+            }
+            return curve;
+        }
+
+        // Helper: Convert AudioBuffer to WAV Blob
         function audioBufferToWav(buffer) {
             return new Promise((resolve) => {
                 const numChannels = buffer.numberOfChannels;
@@ -162,3 +191,4 @@
     </script>
 </body>
 </html>
+
