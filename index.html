@@ -94,7 +94,7 @@
                 // Get Ogg headers
                 worker.postMessage({ command: 'getHeaderPages' });
 
-                // Encode chunks, padding last if needed
+                // Encode chunks, padding last if needed, and transfer buffer to avoid cloning
                 for (let i = 0; i < samples.length; i += frameSize) {
                     let chunk = samples.subarray(i, i + frameSize);
                     if (chunk.length < frameSize) {
@@ -106,7 +106,7 @@
                         worker.postMessage({
                             command: 'encode',
                             buffers: [chunk]
-                        });
+                        }, [chunk.buffer]); // Transfer the buffer to prevent cloning and OOM
                     }
                 }
 
