@@ -124,10 +124,8 @@
       background-image: linear-gradient(rgba(18,18,18,0.1) 50%, rgba(0,0,0,0.1) 50%);
       background-size: 100% 4px;
     }
-
     .console-output::-webkit-scrollbar { width: 12px; background: #2b2b2b; }
     .console-output::-webkit-scrollbar-thumb { background: #555; border: 2px solid #2b2b2b; }
-    .console-output::-webkit-scrollbar-thumb:hover { background: #777; }
 
     /* Source Console Colors */
     .c-text { color: #ccc; }
@@ -139,7 +137,6 @@
 
     .console-input-row { display: flex; border-top: 1px solid #555; background: #333; }
     .console-input-row span { padding: 8px 0 8px 8px; color: #aaa; font-weight: bold; user-select: none; }
-
     #console-input {
       flex-grow: 1; background: transparent; border: none; color: #fff;
       font-family: inherit; font-size: inherit; padding: 8px; outline: none;
@@ -147,7 +144,7 @@
 
     /* --- NET_GRAPH STYLES --- */
     #net-graph {
-      display: none; /* Hidden by default, toggled via cvar */
+      display: none; 
       position: absolute;
       bottom: 250px; right: 30px;
       text-align: right;
@@ -163,25 +160,10 @@
     .ng-ping { color: #66c0f4; }
     .ng-lerp { color: #ffb822; }
     .ng-loss { color: #ff4040; }
-    .ng-bar {
-      display: inline-block; width: 100px; height: 2px; background: #444;
-      margin-left: 5px; position: relative; vertical-align: middle;
-    }
-    .ng-bar-fill {
-      position: absolute; left: 0; top: 0; bottom: 0;
-      background: #a4d007; width: 20%;
-    }
+    .ng-bar { display: inline-block; width: 100px; height: 2px; background: #444; margin-left: 5px; position: relative; vertical-align: middle; }
+    .ng-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #a4d007; width: 20%; }
     
     footer { margin-top: 25px; font-size: 11px; color: #555; border-top: 1px solid #333; padding-top: 15px; text-align: center; }
-
-    @media (max-width: 600px) {
-      body { padding: 10px; }
-      .card { padding: 15px; }
-      .upload-row { flex-direction: column; align-items: stretch; }
-      .upload-row > * { width: 100%; margin-bottom: 5px; }
-      .controls { grid-template-columns: 1fr 1fr; }
-      #net-graph { bottom: 20px; right: 10px; }
-    }
   </style>
 </head>
 <body>
@@ -208,9 +190,10 @@
 
     <div class="preset-row">
       <div class="preset-label">Quick Presets</div>
-      <button class="preset-btn" onclick="execCommand('exec preset_modern')">Authentic (Modern)</button>
-      <button class="preset-btn" onclick="execCommand('exec preset_legacy')">Legacy (2007 Era)</button>
-      <button class="preset-btn" onclick="execCommand('exec preset_spam')">Mic Spam (Loud)</button>
+      <!-- Replaced onclick with data-cmd for safer binding -->
+      <button class="preset-btn" data-cmd="exec preset_modern">Authentic (Modern)</button>
+      <button class="preset-btn" data-cmd="exec preset_legacy">Legacy (2007 Era)</button>
+      <button class="preset-btn" data-cmd="exec preset_spam">Mic Spam (Loud)</button>
     </div>
 
     <div class="controls">
@@ -286,7 +269,6 @@
 
     <audio id="preview" controls crossorigin="anonymous"></audio>
     
-    <!-- Source Engine Console -->
     <div class="console-wrapper">
       <div id="console-out" class="console-output"></div>
       <div class="console-input-row">
@@ -301,7 +283,7 @@
   </div>
 
 <script>
-/* --- GLOBAL ELEMENTS & CONFIG --- */
+/* --- INIT & CONFIG --- */
 const els = {
   file: document.getElementById('file'),
   process: document.getElementById('process'),
@@ -347,12 +329,7 @@ let state = {
   mapName: 'cp_process'
 };
 
-/* --- CVAR FLAGS --- */
-const FCVAR = {
-  NONE: 0,
-  CHEAT: 1 << 0,
-  READONLY: 1 << 1
-};
+const FCVAR = { NONE: 0, CHEAT: 1 << 0 };
 
 /* --- CVAR REGISTRY --- */
 const cvars = {
@@ -384,11 +361,8 @@ const cvars = {
     val: 1.0, help: 'Audio playback volume (0.0 - 1.0)',
     action: (v) => {
       const val = parseFloat(v);
-      if (isNaN(val)) {
-        logLine(`Current volume: ${els.audio.volume.toFixed(2)}`, 'text');
-        return;
-      }
-      els.audio.volume = Math.min(1, Math.max(0, val));
+      if (!isNaN(val)) els.audio.volume = Math.min(1, Math.max(0, val));
+      else logLine(`Current volume: ${els.audio.volume.toFixed(2)}`, 'text');
     }
   },
   'play': { help: 'Start playback', action: () => els.audio.play().catch(e => logLine(e.message, 'err')) },
@@ -396,16 +370,15 @@ const cvars = {
   'restart': { help: 'Restart playback', action: () => { els.audio.currentTime = 0; els.audio.play(); } },
   'echo': { help: 'Echo text to console', action: (v) => logLine(v || "") },
   'find': {
-    help: 'Find console commands with the specified string',
+    help: 'Find console commands',
     action: (v) => {
       if(!v) return logLine("Usage: find <string>", "err");
-      logLine(`Searching for: ${v}`, 'sys');
       Object.keys(cvars).filter(k => k.includes(v.toLowerCase())).forEach(k => {
         logLine(`${k.padEnd(16)} : ${cvars[k].help}`, 'text');
       });
     }
   },
-  'map': { help: 'Set map name (status flavor)', action: (v) => { if(v) state.mapName = v; } },
+  'map': { help: 'Set map name', action: (v) => { if(v) state.mapName = v; } },
   'screenshot': {
     help: 'Save visualizer to file',
     action: () => {
@@ -429,7 +402,6 @@ const cvars = {
     help: 'Reverb environment preset',
     action: (v) => {
       const opts = ['none', 'room', 'locker', 'hall', 'custom'];
-      // Handle numeric index or string
       if(parseInt(v) < 5 && parseInt(v) >= 0) els.env.value = opts[parseInt(v)];
       else if(opts.includes(v)) els.env.value = v;
       else logLine(`Invalid environment. Use: ${opts.join(', ')}`, 'err');
@@ -442,12 +414,11 @@ const cvars = {
 function logLine(text, type = 'text') {
   const div = document.createElement('div');
   div.className = `c-${type}`;
-  div.textContent = text; // Security: Use textContent to prevent injection
+  div.textContent = text;
   els.conOut.appendChild(div);
   els.conOut.scrollTop = els.conOut.scrollHeight;
 }
 
-// Source Engine Argument Tokenizer (Handles quotes)
 function tokenize(str) {
   const regex = /[^\s"]+|"([^"]*)"/g;
   const args = [];
@@ -462,15 +433,14 @@ function execCommand(rawStr) {
   if (!rawStr || !rawStr.trim()) return;
   const tokens = tokenize(rawStr);
   const cmdName = tokens[0].toLowerCase();
-  const arg = tokens.length > 1 ? tokens[1] : undefined; // Simple handling, advanced cmds might need more
+  const arg = tokens.length > 1 ? tokens[1] : undefined;
   
   logLine(`] ${rawStr}`);
 
   const cvar = cvars[cmdName];
   if (cvar) {
-    // Check Cheats
     if ((cvar.flags & FCVAR.CHEAT) && state.sv_cheats === 0) {
-      logLine(`Can't use cheat command "${cmdName}" in multiplayer, unless the server has sv_cheats set to 1.`, 'err');
+      logLine(`Command "${cmdName}" requires sv_cheats 1.`, 'err');
       return;
     }
 
@@ -484,25 +454,45 @@ function execCommand(rawStr) {
         logLine(` - ${cvar.help}`, 'help');
       }
     } else if (cvar.action) {
-      if (arg !== undefined) {
-        cvar.action(arg);
-        // Update internal val if it exists to match user input
-        if(cvar.val !== undefined) {
+      cvar.action(arg);
+      if(cvar.val !== undefined && arg !== undefined) {
            cvar.val = arg;
            logLine(`"${cmdName}" = "${arg}"`, 'val');
-        }
-      } else {
-        // Run action with undefined to potentially trigger status print
-        cvar.action(undefined);
-        // If command is just a trigger, don't print val unless it has one
-        if (cvar.val !== undefined) {
-            logLine(`"${cmdName}" = "${cvar.val}"`, 'text');
-        }
       }
     }
   } else {
     logLine(`Unknown command "${cmdName}"`, 'err');
   }
+}
+
+window.execCommand = execCommand; // Ensure global availability
+
+function runPreset(name) {
+  if(!name) return;
+  const cleanName = name.replace('exec ', '').replace('preset_', '');
+  const p = presets[cleanName];
+  
+  if(!p) {
+    logLine(`Error: preset "${name}" not found.`, 'err');
+    return;
+  }
+  
+  logLine(`exec user_presets/${cleanName}.cfg`, 'cmd');
+  
+  // Bypass cheats for presets
+  const tempCheats = state.sv_cheats;
+  state.sv_cheats = 1; 
+  
+  execCommand(`host_framerate ${p.sr}`);
+  execCommand(`dsp_hpf ${p.hp}`);
+  execCommand(`dsp_lpf ${p.lp}`);
+  execCommand(`snd_bits ${p.bits}`);
+  execCommand(`voice_scale ${p.gain}`);
+  execCommand(`net_fakeloss ${p.loss}`);
+  execCommand(`dsp_room ${p.env}`);
+  
+  state.sv_cheats = tempCheats;
+  logLine(`Preset "${cleanName}" loaded successfully.`, 'sys');
 }
 
 function printCvarList() {
@@ -526,33 +516,15 @@ function printStatus() {
   }
 }
 
-function runPreset(name) {
-  // Handle "exec preset_modern" or just "preset_modern"
-  const cleanName = name.replace('exec ', '').replace('preset_', '');
-  const p = presets[cleanName];
-  if(!p) {
-    logLine(`Error: preset "${name}" not found.`, 'err');
-    return;
-  }
-  
-  logLine(`exec user_presets/${cleanName}.cfg`, 'cmd');
-  
-  // Force cheat cvar changes even if sv_cheats is 0 for presets (Engine quirk simulation)
-  const tempCheats = state.sv_cheats;
-  state.sv_cheats = 1; 
-  
-  execCommand(`host_framerate ${p.sr}`);
-  execCommand(`dsp_hpf ${p.hp}`);
-  execCommand(`dsp_lpf ${p.lp}`);
-  execCommand(`snd_bits ${p.bits}`);
-  execCommand(`voice_scale ${p.gain}`);
-  execCommand(`net_fakeloss ${p.loss}`);
-  execCommand(`dsp_room ${p.env}`);
-  
-  state.sv_cheats = tempCheats;
-}
+/* --- EVENT LISTENERS --- */
+// Safer button binding
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const cmd = btn.getAttribute('data-cmd');
+    if(cmd) execCommand(cmd);
+  });
+});
 
-/* --- INPUT HANDLER --- */
 els.conIn.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const val = els.conIn.value;
@@ -581,46 +553,10 @@ els.conIn.addEventListener('keydown', (e) => {
     e.preventDefault();
     const val = els.conIn.value;
     if (!val) return;
-    
     const matches = Object.keys(cvars).filter(k => k.startsWith(val.toLowerCase()));
-    if (matches.length === 1) {
-      els.conIn.value = matches[0] + " ";
-    } else if (matches.length > 1) {
-      logLine(`> ${matches.join(', ')}`, 'help');
-    }
+    if (matches.length === 1) els.conIn.value = matches[0] + " ";
+    else if (matches.length > 1) logLine(`> ${matches.join(', ')}`, 'help');
   }
-});
-
-/* --- NET GRAPH LOOP --- */
-let lastTime = performance.now();
-let frameCount = 0;
-function updateNetGraph() {
-  requestAnimationFrame(updateNetGraph);
-  const now = performance.now();
-  frameCount++;
-  if (now - lastTime >= 500) { 
-    const fps = Math.round(frameCount * 2);
-    els.ngFps.textContent = fps;
-    const lerpBase = parseFloat(document.getElementById('frameMs').value) * 2;
-    els.ngLerp.textContent = (lerpBase + (Math.random()*2)).toFixed(1);
-    els.ngPing.textContent = Math.floor(Math.random() * 15) + 5;
-    
-    // Optimized DOM updates
-    const fillPct = Math.min(100, (fps / 60) * 100);
-    els.ngFill.style.width = fillPct + '%';
-    els.ngFill.style.background = (fps < 30) ? '#ff4040' : '#a4d007';
-    els.ngLoss.textContent = document.getElementById('loss').value;
-
-    frameCount = 0;
-    lastTime = now;
-  }
-}
-updateNetGraph();
-
-/* --- AUDIO & VISUALIZER LOGIC --- */
-els.env.addEventListener('change', () => {
-  const isCustom = els.env.value === 'custom';
-  els.customEnv.style.display = isCustom ? 'block' : 'none';
 });
 
 els.file.addEventListener('change', () => {
@@ -631,184 +567,12 @@ els.file.addEventListener('change', () => {
   }
 });
 
-const ctx = els.canvas.getContext('2d', { alpha: false }); // Optimization
-
-function resizeCanvas() {
-  const dpr = window.devicePixelRatio || 1;
-  const rect = els.canvas.getBoundingClientRect();
-  if(els.canvas.width !== rect.width * dpr || els.canvas.height !== rect.height * dpr) {
-      els.canvas.width = rect.width * dpr;
-      els.canvas.height = rect.height * dpr;
-      ctx.scale(dpr, dpr);
-  }
-  return { w: rect.width, h: rect.height };
-}
-
-function drawGrid(w, h) {
-  ctx.fillStyle = '#000'; // Clear with color instead of clearRect for alpha:false optimization
-  ctx.fillRect(0,0,w,h);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, h/2); ctx.lineTo(w, h/2);
-  ctx.moveTo(0, h/4); ctx.lineTo(w, h/4);
-  ctx.moveTo(0, h*0.75); ctx.lineTo(w, h*0.75);
-  ctx.stroke();
-}
-
-// 1. Standard Playback Animation
-function animateSpectrum() {
-  if(!state.isPlaying) return;
-  const { w, h } = resizeCanvas();
-  const bufferLength = state.analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
-  state.analyser.getByteFrequencyData(dataArray);
-  
-  drawGrid(w, h);
-
-  const barWidth = (w / bufferLength) * 2.5;
-  let x = 0;
-  let sum = 0;
-  for(let i=0; i<bufferLength; i++) sum += dataArray[i];
-  const isLoud = (sum/bufferLength) > 60; 
-  
-  for(let i = 0; i < bufferLength; i++) {
-    let barHeight = (dataArray[i] / 255) * h;
-    ctx.fillStyle = (isLoud && barHeight > h*0.6) ? 
-      `rgb(${barHeight + 100}, 50, 50)` : `rgb(${50}, ${barHeight + 100}, 240)`;
-    ctx.fillRect(x, h - barHeight, barWidth, barHeight);
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
-    ctx.fillRect(x, h - barHeight, barWidth, 2);
-    x += barWidth + 1;
-  }
-  state.animationId = requestAnimationFrame(animateSpectrum);
-}
-
-// 2. Static Waveform (Optimized Downsampling)
-function drawStaticWaveform() {
-  if(!state.processedBuffer) return;
-  const { w, h } = resizeCanvas();
-  const data = state.processedBuffer;
-  
-  drawGrid(w, h);
-
-  ctx.fillStyle = '#66c0f4';
-  
-  // Optimization: Don't iterate every sample for large files
-  const step = Math.max(1, Math.ceil(data.length / w));
-  const amp = h / 2;
-
-  ctx.beginPath();
-  for(let i = 0; i < w; i++){
-    let min = 1.0, max = -1.0;
-    // Sample a chunk
-    const startIdx = i * step;
-    // Optimization: limit lookahead loop
-    const endIdx = Math.min(startIdx + step, data.length);
-    
-    for(let j=startIdx; j<endIdx; j++){
-      const val = data[j];
-      if(val < min) min = val;
-      if(val > max) max = val;
-    }
-    if(max < min) { min=0; max=0; } // Silence
-    
-    const yTop = (1 - max) * amp;
-    const yBot = (1 - min) * amp;
-    // Draw single pixel wide strip
-    ctx.fillRect(i, yTop, 1, Math.max(1, yBot - yTop));
-  }
-}
-
-// 3. Scrub Frame (DFT)
-function performDFT(buffer, start, N, K) {
-  const out = new Float32Array(K);
-  if (start + N >= buffer.length) return out;
-  const twoPi = 2 * Math.PI;
-  
-  for (let k = 0; k < K; k++) {
-    let r = 0, i = 0;
-    for (let n = 0; n < N; n++) {
-      const x = buffer[start + n];
-      const w = 0.5 * (1 - Math.cos((twoPi * n) / (N - 1)));
-      const wx = x * w;
-      const theta = (twoPi * k * n) / N;
-      r += wx * Math.cos(theta);
-      i += wx * Math.sin(theta);
-    }
-    out[k] = Math.sqrt(r*r + i*i);
-  }
-  return out;
-}
-
-function drawScrubFrame() {
-  if(state.isPlaying || !state.processedBuffer) return;
-
-  const { w, h } = resizeCanvas();
-  drawGrid(w, h);
-
-  const pct = els.audio.currentTime / els.audio.duration;
-  if(!isFinite(pct) || pct < 0 || pct > 1) return;
-
-  const bufferIdx = Math.floor(pct * state.processedBuffer.length);
-  const fftSize = 256; 
-  const binCount = 128;
-  
-  const freqs = performDFT(state.processedBuffer, bufferIdx, fftSize, binCount);
-  const barWidth = (w / binCount) * 2.5;
-  let x = 0;
-
-  for (let i = 0; i < binCount; i++) {
-    const mag = freqs[i]; 
-    const val = Math.min(1.0, mag * 3.5); 
-    const barHeight = val * h;
-    const isLoud = barHeight > h * 0.6;
-    
-    ctx.fillStyle = isLoud ? 
-      `rgb(${barHeight + 100}, 50, 50)` : 
-      `rgb(50, ${barHeight + 100}, 240)`;
-
-    ctx.fillRect(x, h - barHeight, barWidth, barHeight);
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.fillRect(x, h - barHeight, barWidth, 2);
-    x += barWidth + 1;
-  }
-}
-
-/* --- MEDIA EVENT BINDINGS --- */
-els.audio.addEventListener('play', () => {
-  if(!state.audioCtx) initAudioContext();
-  if(state.audioCtx.state === 'suspended') state.audioCtx.resume();
-  state.isPlaying = true;
-  cancelAnimationFrame(state.animationId);
-  animateSpectrum();
+els.env.addEventListener('change', () => {
+  const isCustom = els.env.value === 'custom';
+  els.customEnv.style.display = isCustom ? 'block' : 'none';
 });
 
-els.audio.addEventListener('pause', () => { 
-  state.isPlaying = false; 
-  cancelAnimationFrame(state.animationId); 
-  drawScrubFrame(); 
-});
-
-els.audio.addEventListener('ended', () => { 
-  state.isPlaying = false; 
-  cancelAnimationFrame(state.animationId); 
-  drawStaticWaveform(); 
-});
-
-els.audio.addEventListener('seeking', drawScrubFrame);
-els.audio.addEventListener('seeked', drawScrubFrame);
-
-function initAudioContext() {
-  state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  state.analyser = state.audioCtx.createAnalyser();
-  state.analyser.fftSize = 256;
-  state.sourceNode = state.audioCtx.createMediaElementSource(els.audio);
-  state.sourceNode.connect(state.analyser);
-  state.analyser.connect(state.audioCtx.destination);
-}
-
-/* --- PROCESSING LOGIC --- */
+/* --- AUDIO PROCESSING --- */
 els.process.addEventListener('click', async () => {
   els.process.disabled = true; els.dl.setAttribute('disabled', 'true');
   logLine(`S_StartSound: initializing render...`);
@@ -816,6 +580,7 @@ els.process.addEventListener('click', async () => {
 
   try {
     const file = els.file.files[0];
+    if(!file) throw new Error("No file loaded");
     const arrayBuffer = await file.arrayBuffer();
     const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
     const decoded = await tempCtx.decodeAudioData(arrayBuffer);
@@ -907,6 +672,7 @@ els.process.addEventListener('click', async () => {
   }
 });
 
+/* --- HELPERS --- */
 function makeDistortionCurve(amount) {
   if (amount <= 0) return new Float32Array([0, 0]);
   const k = amount, n = 44100, curve = new Float32Array(n), deg = Math.PI / 180;
@@ -970,11 +736,152 @@ function makeWav(data, rate) {
   return new Blob([buf], {type:'audio/wav'});
 }
 
-window.addEventListener('resize', () => {
-  if(state.isPlaying) return;
-  drawStaticWaveform();
-});
+/* --- VISUALIZER LOOP --- */
+const ctx = els.canvas.getContext('2d', { alpha: false });
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = els.canvas.getBoundingClientRect();
+  if(els.canvas.width !== rect.width * dpr || els.canvas.height !== rect.height * dpr) {
+      els.canvas.width = rect.width * dpr;
+      els.canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+  }
+  return { w: rect.width, h: rect.height };
+}
 
+function drawGrid(w, h) {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, h/2); ctx.lineTo(w, h/2);
+  ctx.stroke();
+}
+
+function animateSpectrum() {
+  if(!state.isPlaying) return;
+  const { w, h } = resizeCanvas();
+  const bufferLength = state.analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  state.analyser.getByteFrequencyData(dataArray);
+  drawGrid(w, h);
+  const barWidth = (w / bufferLength) * 2.5;
+  let x = 0, sum = 0;
+  for(let i=0; i<bufferLength; i++) sum += dataArray[i];
+  const isLoud = (sum/bufferLength) > 60; 
+  for(let i = 0; i < bufferLength; i++) {
+    let barHeight = (dataArray[i] / 255) * h;
+    ctx.fillStyle = (isLoud && barHeight > h*0.6) ? `rgb(${barHeight + 100}, 50, 50)` : `rgb(50, ${barHeight + 100}, 240)`;
+    ctx.fillRect(x, h - barHeight, barWidth, barHeight);
+    x += barWidth + 1;
+  }
+  state.animationId = requestAnimationFrame(animateSpectrum);
+}
+
+function drawStaticWaveform() {
+  if(!state.processedBuffer) return;
+  const { w, h } = resizeCanvas();
+  drawGrid(w, h);
+  ctx.fillStyle = '#66c0f4';
+  const data = state.processedBuffer;
+  const step = Math.max(1, Math.ceil(data.length / w));
+  const amp = h / 2;
+  for(let i = 0; i < w; i++){
+    let min = 1.0, max = -1.0;
+    const startIdx = i * step;
+    const endIdx = Math.min(startIdx + step, data.length);
+    for(let j=startIdx; j<endIdx; j++){
+      const val = data[j];
+      if(val < min) min = val;
+      if(val > max) max = val;
+    }
+    if(max < min) { min=0; max=0; }
+    const yTop = (1 - max) * amp;
+    const yBot = (1 - min) * amp;
+    ctx.fillRect(i, yTop, 1, Math.max(1, yBot - yTop));
+  }
+}
+
+function drawScrubFrame() {
+  if(state.isPlaying || !state.processedBuffer) return;
+  const { w, h } = resizeCanvas();
+  drawGrid(w, h);
+  const pct = els.audio.currentTime / els.audio.duration;
+  if(!isFinite(pct) || pct < 0 || pct > 1) return;
+  const bufferIdx = Math.floor(pct * state.processedBuffer.length);
+  
+  const fftSize = 256; 
+  const binCount = 128;
+  const out = new Float32Array(binCount);
+  const twoPi = 2 * Math.PI;
+  
+  // Quick DFT
+  for (let k = 0; k < binCount; k++) {
+    let r = 0, i = 0;
+    for (let n = 0; n < fftSize; n++) {
+      if(bufferIdx + n >= state.processedBuffer.length) break;
+      const x = state.processedBuffer[bufferIdx + n];
+      const w = 0.5 * (1 - Math.cos((twoPi * n) / (fftSize - 1)));
+      const theta = (twoPi * k * n) / fftSize;
+      r += (x*w) * Math.cos(theta);
+      i += (x*w) * Math.sin(theta);
+    }
+    out[k] = Math.sqrt(r*r + i*i);
+  }
+  
+  const barWidth = (w / binCount) * 2.5;
+  let x = 0;
+  for (let i = 0; i < binCount; i++) {
+    const val = Math.min(1.0, out[i] * 3.5); 
+    const barHeight = val * h;
+    ctx.fillStyle = (barHeight > h * 0.6) ? `rgb(${barHeight + 100}, 50, 50)` : `rgb(50, ${barHeight + 100}, 240)`;
+    ctx.fillRect(x, h - barHeight, barWidth, barHeight);
+    x += barWidth + 1;
+  }
+}
+
+els.audio.addEventListener('play', () => {
+  if(!state.audioCtx) {
+    state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    state.analyser = state.audioCtx.createAnalyser();
+    state.analyser.fftSize = 256;
+    state.sourceNode = state.audioCtx.createMediaElementSource(els.audio);
+    state.sourceNode.connect(state.analyser);
+    state.analyser.connect(state.audioCtx.destination);
+  }
+  if(state.audioCtx.state === 'suspended') state.audioCtx.resume();
+  state.isPlaying = true;
+  cancelAnimationFrame(state.animationId);
+  animateSpectrum();
+});
+els.audio.addEventListener('pause', () => { state.isPlaying = false; cancelAnimationFrame(state.animationId); drawScrubFrame(); });
+els.audio.addEventListener('ended', () => { state.isPlaying = false; cancelAnimationFrame(state.animationId); drawStaticWaveform(); });
+els.audio.addEventListener('seeking', drawScrubFrame);
+els.audio.addEventListener('seeked', drawScrubFrame);
+window.addEventListener('resize', () => { if(!state.isPlaying) drawStaticWaveform(); });
+
+// NetGraph Update
+let lastTime = performance.now(), frameCount = 0;
+function updateNetGraph() {
+  requestAnimationFrame(updateNetGraph);
+  const now = performance.now();
+  frameCount++;
+  if (now - lastTime >= 500) { 
+    const fps = Math.round(frameCount * 2);
+    els.ngFps.textContent = fps;
+    const lerpBase = parseFloat(document.getElementById('frameMs').value) * 2;
+    els.ngLerp.textContent = (lerpBase + (Math.random()*2)).toFixed(1);
+    els.ngPing.textContent = Math.floor(Math.random() * 15) + 5;
+    els.ngLoss.textContent = document.getElementById('loss').value;
+    els.ngFill.style.width = Math.min(100, (fps / 60) * 100) + '%';
+    els.ngFill.style.background = (fps < 30) ? '#ff4040' : '#a4d007';
+    frameCount = 0; lastTime = now;
+  }
+}
+updateNetGraph();
+
+// Boot sequence
 (function bootConsole() {
   const bootLogs = [
     { t: "Valve Software - Source Engine [ Build 22050 ]", c: 'text' },
