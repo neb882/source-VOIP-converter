@@ -71,15 +71,26 @@
     
     label { display: block; font-size: 11px; font-weight: bold; color: var(--accent); margin-bottom: 8px; text-transform: uppercase; }
     
-    input[type=number], input[type=range] {
+    input[type=number], input[type=range], select {
       width: 100%; background: #0e1218; border: 1px solid #3e4853; color: white;
       padding: 8px; border-radius: 4px; font-size: 14px;
     }
+    select { cursor: pointer; }
     input[type=range] { -webkit-appearance: none; height: 6px; background: #111; border: none; margin-top: 5px; padding: 0; }
     input[type=range]::-webkit-slider-thumb {
       -webkit-appearance: none; width: 18px; height: 18px;
       background: #888; cursor: pointer; border-radius: 50%; border: 2px solid #ccc;
     }
+
+    /* Custom Reverb Panel */
+    #custom-env {
+      grid-column: 1 / -1; /* Spans full width */
+      display: none;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--accent);
+    }
+    .custom-row { display: flex; gap: 15px; flex-wrap: wrap; }
+    .custom-col { flex: 1; min-width: 100px; }
 
     /* Visualizer Wrapper */
     .viz-container {
@@ -165,6 +176,36 @@
       </div>
 
       <div class="control">
+        <label>Environment</label>
+        <select id="env">
+          <option value="none">None (Dry)</option>
+          <option value="room">Generic Room</option>
+          <option value="locker">Locker Room</option>
+          <option value="hall">Empty Hallway</option>
+          <option value="custom">Custom Params</option>
+        </select>
+      </div>
+
+      <!-- Custom Reverb Controls (Hidden by default) -->
+      <div id="custom-env" class="control">
+        <label style="margin-bottom:12px; border-bottom:1px solid #444; padding-bottom:4px;">Custom Reverb Settings</label>
+        <div class="custom-row">
+          <div class="custom-col">
+             <label>Time (sec)</label>
+             <input id="c_dur" type="number" value="1.5" step="0.1" min="0.1" max="5.0">
+          </div>
+          <div class="custom-col">
+             <label>Decay Exp</label>
+             <input id="c_dec" type="number" value="3.0" step="0.1" min="0.1" max="15.0">
+          </div>
+          <div class="custom-col">
+             <label>Wet Mix %</label>
+             <input id="c_mix" type="number" value="25" min="0" max="100">
+          </div>
+        </div>
+      </div>
+
+      <div class="control">
         <label>Bit Depth</label>
         <input id="bits" type="number" value="16" min="4" max="16">
       </div>
@@ -196,9 +237,9 @@
 <script>
 /* --- CONFIG & STATE --- */
 const presets = {
-  standard: { sr: 22050, hp: 300, lp: 6000, bits: 16, gain: 1.2, loss: 0 },
-  retro:    { sr: 11025, hp: 400, lp: 3500, bits: 8,  gain: 2.5, loss: 0 },
-  loud:     { sr: 22050, hp: 200, lp: 12000, bits: 12, gain: 12.0, loss: 0 }
+  standard: { sr: 22050, hp: 300, lp: 6000, bits: 16, gain: 1.2, loss: 0, env: 'none' },
+  retro:    { sr: 11025, hp: 400, lp: 3500, bits: 8,  gain: 2.5, loss: 0, env: 'room' },
+  loud:     { sr: 22050, hp: 200, lp: 12000, bits: 12, gain: 12.0, loss: 0, env: 'none' }
 };
 
 const els = {
@@ -208,7 +249,17 @@ const els = {
   audio: document.getElementById('preview'),
   log: document.getElementById('log'),
   canvas: document.getElementById('visualizer'),
-  gain: document.getElementById('gain')
+  gain: document.getElementById('gain'),
+  env: document.getElementById('env'),
+  customEnv: document.getElementById('custom-env')
+};
+
+// Reverb configurations: [duration(sec), decay, mix(0-1)]
+const envConfigs = {
+  none:   null,
+  room:   [0.5, 3.0, 0.15],
+  locker: [0.3, 8.0, 0.25],
+  hall:   [1.5, 4.0, 0.35]
 };
 
 let state = {
@@ -222,6 +273,11 @@ let state = {
 };
 
 /* --- UI HANDLERS --- */
+els.env.addEventListener('change', () => {
+  const isCustom = els.env.value === 'custom';
+  els.customEnv.style.display = isCustom ? 'block' : 'none';
+});
+
 function setPreset(name){
   const p = presets[name];
   document.getElementById('sr').value = p.sr;
@@ -230,6 +286,11 @@ function setPreset(name){
   document.getElementById('bits').value = p.bits;
   document.getElementById('gain').value = p.gain;
   document.getElementById('loss').value = p.loss;
+  
+  els.env.value = p.env;
+  // Trigger change event manually to update visibility
+  els.env.dispatchEvent(new Event('change'));
+  
   writeLog(`Loaded preset: ${name.toUpperCase()}`);
 }
 
@@ -394,14 +455,30 @@ els.process.addEventListener('click', async () => {
 
     // Setup Offline Render
     const targetRate = parseInt(document.getElementById('sr').value);
-    const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * targetRate), targetRate);
+    const envChoice = els.env.value;
+    
+    // Determine Reverb Params
+    let revDur = 0, revDecay = 0, revMix = 0;
+    
+    if (envChoice === 'custom') {
+      revDur = Number(document.getElementById('c_dur').value);
+      revDecay = Number(document.getElementById('c_dec').value);
+      revMix = Number(document.getElementById('c_mix').value) / 100;
+    } else if (envConfigs[envChoice]) {
+      [revDur, revDecay, revMix] = envConfigs[envChoice];
+    }
+
+    // Calculate tail based on duration
+    const extraTail = (revMix > 0) ? revDur * targetRate : 0;
+    
+    const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * targetRate) + extraTail, targetRate);
     
     const src = offline.createBufferSource();
     const buf = offline.createBuffer(1, monoRaw.length, decoded.sampleRate);
     buf.copyToChannel(monoRaw, 0, 0);
     src.buffer = buf;
 
-    // DSP Nodes
+    // Filters
     const hp = offline.createBiquadFilter();
     hp.type = 'highpass'; hp.frequency.value = Number(document.getElementById('hp').value);
     
@@ -410,16 +487,42 @@ els.process.addEventListener('click', async () => {
 
     const dist = offline.createWaveShaper();
     const gainVal = Number(document.getElementById('gain').value);
-    dist.curve = makeDistortionCurve((gainVal - 1) * 20); // Curve logic remains, but default gain is lower
+    dist.curve = makeDistortionCurve((gainVal - 1) * 20);
 
     const comp = offline.createDynamicsCompressor();
     comp.threshold.value = -12;
-    comp.ratio.value = 12; // Slightly relaxed ratio
+    comp.ratio.value = 12;
     comp.attack.value = 0.003;
     comp.release.value = 0.25;
 
-    // Connect Chain: Src -> HP -> Dist -> LP -> Comp -> Dest
-    src.connect(hp); hp.connect(dist); dist.connect(lp); lp.connect(comp); comp.connect(offline.destination);
+    // Build Chain: Src -> HP -> Dist -> LP
+    src.connect(hp); hp.connect(dist); dist.connect(lp);
+
+    // Reverb Logic
+    if (revMix > 0) {
+      const conv = offline.createConvolver();
+      conv.buffer = makeImpulse(offline, revDur, revDecay);
+      
+      const wetGain = offline.createGain();
+      wetGain.gain.value = revMix;
+      
+      const dryGain = offline.createGain();
+      dryGain.gain.value = 1.0; 
+      
+      // Split path
+      lp.connect(dryGain);
+      dryGain.connect(comp);
+      
+      lp.connect(conv);
+      conv.connect(wetGain);
+      wetGain.connect(comp);
+      
+    } else {
+      // Direct path
+      lp.connect(comp);
+    }
+
+    comp.connect(offline.destination);
 
     src.start(0);
     const rendered = await offline.startRendering();
@@ -468,6 +571,21 @@ function makeDistortionCurve(amount) {
     curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
   }
   return curve;
+}
+
+function makeImpulse(ctx, duration, decay) {
+  const rate = ctx.sampleRate;
+  const len = rate * duration;
+  const buffer = ctx.createBuffer(1, len, rate); // Mono impulse
+  const data = buffer.getChannelData(0);
+  
+  for (let i = 0; i < len; i++) {
+    // White noise with exponential decay
+    const noise = (Math.random() * 2) - 1;
+    const env = Math.pow(1 - (i / len), decay);
+    data[i] = noise * env;
+  }
+  return buffer;
 }
 
 function quantize(data, bits) {
