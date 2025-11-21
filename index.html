@@ -190,13 +190,12 @@
 
     <div class="preset-row">
       <div class="preset-label">Quick Presets</div>
-      <!-- Replaced onclick with data-cmd for safer binding -->
       <button class="preset-btn" data-cmd="exec preset_modern">Authentic (Modern)</button>
       <button class="preset-btn" data-cmd="exec preset_legacy">Legacy (2007 Era)</button>
       <button class="preset-btn" data-cmd="exec preset_spam">Mic Spam (Loud)</button>
     </div>
 
-    <div class="controls">
+    <div class="controls" id="controls-wrapper">
       <div class="control">
         <label>Rate (Hz) [host_framerate]</label>
         <input id="sr" type="number" value="22050" step="50">
@@ -232,15 +231,15 @@
         <label style="margin-bottom:12px; border-bottom:1px solid #444; padding-bottom:4px;">dsp_custom settings</label>
         <div class="custom-row">
           <div class="custom-col">
-             <label>Time</label>
+             <label>Time [dsp_custom_time]</label>
              <input id="c_dur" type="number" value="1.5" step="0.1">
           </div>
           <div class="custom-col">
-             <label>Decay</label>
+             <label>Decay [dsp_custom_decay]</label>
              <input id="c_dec" type="number" value="3.0" step="0.1">
           </div>
           <div class="custom-col">
-             <label>Mix</label>
+             <label>Mix [dsp_custom_mix]</label>
              <input id="c_mix" type="number" value="25">
           </div>
         </div>
@@ -283,7 +282,7 @@
   </div>
 
 <script>
-/* --- INIT & CONFIG --- */
+/* --- INIT & STATE --- */
 const els = {
   file: document.getElementById('file'),
   process: document.getElementById('process'),
@@ -293,6 +292,7 @@ const els = {
   gain: document.getElementById('gain'),
   env: document.getElementById('env'),
   customEnv: document.getElementById('custom-env'),
+  controls: document.getElementById('controls-wrapper'),
   conOut: document.getElementById('console-out'),
   conIn: document.getElementById('console-input'),
   ng: document.getElementById('net-graph'),
@@ -331,14 +331,39 @@ let state = {
 
 const FCVAR = { NONE: 0, CHEAT: 1 << 0 };
 
-/* --- CVAR REGISTRY --- */
+/* --- CVAR SYSTEM --- */
 const cvars = {
+  // --- System Commands ---
   'clear': { help: 'Clear the console output', action: () => els.conOut.innerHTML = '' },
   'help': { help: 'Show command list', action: () => execCommand('cvarlist') },
   'cvarlist': { help: 'List available console commands', action: printCvarList },
   'status': { help: 'Display map and connection status', action: printStatus },
   'quit': { help: 'Exit the engine', action: () => { logLine('Disconnect: Client disconnect'); els.audio.pause(); } },
   'exec': { help: 'Execute a preset config', action: runPreset },
+  'echo': { help: 'Echo text to console', action: (v) => logLine(v || "") },
+  'find': {
+    help: 'Find console commands',
+    action: (v) => {
+      if(!v) return logLine("Usage: find <string>", "err");
+      logLine(`Searching for: ${v}`, 'sys');
+      Object.keys(cvars).filter(k => k.includes(v.toLowerCase())).forEach(k => {
+        logLine(`${k.padEnd(16)} : ${cvars[k].help}`, 'text');
+      });
+    }
+  },
+  'map': { help: 'Set map name', action: (v) => { if(v) state.mapName = v; } },
+  'screenshot': {
+    help: 'Save visualizer to file',
+    action: () => {
+      const link = document.createElement('a');
+      link.download = `tf2_viz_${Date.now()}.png`;
+      link.href = els.canvas.toDataURL();
+      link.click();
+      logLine(`Wrote ${link.download}`, 'sys');
+    }
+  },
+  
+  // --- Gameplay/Audio Flags ---
   'sv_cheats': { 
     val: 0, help: 'Enable cheats/dev limits', 
     action: (v) => { 
@@ -368,29 +393,8 @@ const cvars = {
   'play': { help: 'Start playback', action: () => els.audio.play().catch(e => logLine(e.message, 'err')) },
   'stop': { help: 'Stop playback', action: () => { els.audio.pause(); els.audio.currentTime = 0; } },
   'restart': { help: 'Restart playback', action: () => { els.audio.currentTime = 0; els.audio.play(); } },
-  'echo': { help: 'Echo text to console', action: (v) => logLine(v || "") },
-  'find': {
-    help: 'Find console commands',
-    action: (v) => {
-      if(!v) return logLine("Usage: find <string>", "err");
-      Object.keys(cvars).filter(k => k.includes(v.toLowerCase())).forEach(k => {
-        logLine(`${k.padEnd(16)} : ${cvars[k].help}`, 'text');
-      });
-    }
-  },
-  'map': { help: 'Set map name', action: (v) => { if(v) state.mapName = v; } },
-  'screenshot': {
-    help: 'Save visualizer to file',
-    action: () => {
-      const link = document.createElement('a');
-      link.download = `tf2_viz_${Date.now()}.png`;
-      link.href = els.canvas.toDataURL();
-      link.click();
-      logLine(`Wrote ${link.download}`, 'sys');
-    }
-  },
-  
-  // Linked Inputs
+
+  // --- Linked Variables (Bi-Directional) ---
   'voice_scale': { help: 'Microphone gain boost', link: 'gain', flags: FCVAR.CHEAT },
   'host_framerate': { help: 'Audio sample rate (Hz)', link: 'sr' },
   'dsp_hpf': { link: 'hp', help: 'High pass filter cutoff' },
@@ -398,19 +402,37 @@ const cvars = {
   'snd_bits': { link: 'bits', help: 'Output bit depth' },
   'net_fakeloss': { link: 'loss', help: 'Simulated packet loss percentage' },
   'net_split': { link: 'frameMs', help: 'Packet size in milliseconds' },
+  'dsp_custom_time': { link: 'c_dur', help: 'Custom reverb duration' },
+  'dsp_custom_decay': { link: 'c_dec', help: 'Custom reverb decay' },
+  'dsp_custom_mix': { link: 'c_mix', help: 'Custom reverb mix %' },
+  
   'dsp_room': { 
     help: 'Reverb environment preset',
+    link: 'env', // Linked for value setting, but custom action for logic
     action: (v) => {
       const opts = ['none', 'room', 'locker', 'hall', 'custom'];
-      if(parseInt(v) < 5 && parseInt(v) >= 0) els.env.value = opts[parseInt(v)];
-      else if(opts.includes(v)) els.env.value = v;
-      else logLine(`Invalid environment. Use: ${opts.join(', ')}`, 'err');
-      els.env.dispatchEvent(new Event('change'));
+      let val = v;
+      // Handle numeric input vs string input
+      if(!isNaN(parseInt(v)) && parseInt(v) < 5) val = opts[parseInt(v)];
+      
+      if(opts.includes(val)) {
+        els.env.value = val;
+        // Trigger UI update for the Custom panel visibility
+        els.customEnv.style.display = (val === 'custom') ? 'block' : 'none';
+      } else {
+        logLine(`Invalid environment. Use: ${opts.join(', ')}`, 'err');
+      }
     }
   }
 };
 
-/* --- CONSOLE ENGINE --- */
+// Reverse Map for GUI -> Console logging
+const idToCvarMap = {};
+Object.keys(cvars).forEach(key => {
+  if(cvars[key].link) idToCvarMap[cvars[key].link] = key;
+});
+
+/* --- CONSOLE LOGIC --- */
 function logLine(text, type = 'text') {
   const div = document.createElement('div');
   div.className = `c-${type}`;
@@ -429,25 +451,37 @@ function tokenize(str) {
   return args;
 }
 
-function execCommand(rawStr) {
+function execCommand(rawStr, isFromGui = false) {
   if (!rawStr || !rawStr.trim()) return;
   const tokens = tokenize(rawStr);
   const cmdName = tokens[0].toLowerCase();
   const arg = tokens.length > 1 ? tokens[1] : undefined;
   
-  logLine(`] ${rawStr}`);
+  if(!isFromGui) logLine(`] ${rawStr}`);
+  else logLine(`] ${rawStr} (gui_msg)`, 'help');
 
   const cvar = cvars[cmdName];
   if (cvar) {
+    // Cheats Check
     if ((cvar.flags & FCVAR.CHEAT) && state.sv_cheats === 0) {
       logLine(`Command "${cmdName}" requires sv_cheats 1.`, 'err');
+      // Revert GUI if needed
+      if(isFromGui && cvar.link) {
+         // This is complex to revert accurately without storing previous state, 
+         // but simpler is just to warn.
+      }
       return;
     }
 
     if (cvar.link) {
       const el = document.getElementById(cvar.link);
       if (arg !== undefined) {
-        el.value = arg;
+        // Console -> GUI update
+        if(el.value !== arg) el.value = arg;
+        
+        // Special case: dsp_room needs to trigger its side effect
+        if(cmdName === 'dsp_room') cvar.action(arg); 
+        
         logLine(`"${cmdName}" = "${arg}"`, 'val');
       } else {
         logLine(`"${cmdName}" = "${el.value}"`, 'text');
@@ -465,13 +499,26 @@ function execCommand(rawStr) {
   }
 }
 
-window.execCommand = execCommand; // Ensure global availability
+// Expose for debugging
+window.execCommand = execCommand;
 
+/* --- GUI -> CONSOLE BINDINGS --- */
+// Use event delegation for all control inputs
+els.controls.addEventListener('change', (e) => {
+  const target = e.target;
+  if (idToCvarMap[target.id]) {
+    const cmd = idToCvarMap[target.id];
+    const val = target.value;
+    // We log it exactly as if the user typed it
+    execCommand(`${cmd} ${val}`, true);
+  }
+});
+
+/* --- PRESETS --- */
 function runPreset(name) {
   if(!name) return;
   const cleanName = name.replace('exec ', '').replace('preset_', '');
   const p = presets[cleanName];
-  
   if(!p) {
     logLine(`Error: preset "${name}" not found.`, 'err');
     return;
@@ -479,10 +526,10 @@ function runPreset(name) {
   
   logLine(`exec user_presets/${cleanName}.cfg`, 'cmd');
   
-  // Bypass cheats for presets
   const tempCheats = state.sv_cheats;
-  state.sv_cheats = 1; 
+  state.sv_cheats = 1; // Bypass for presets
   
+  // Use execCommand so it updates GUI inputs and logs correctly
   execCommand(`host_framerate ${p.sr}`);
   execCommand(`dsp_hpf ${p.hp}`);
   execCommand(`dsp_lpf ${p.lp}`);
@@ -490,15 +537,16 @@ function runPreset(name) {
   execCommand(`voice_scale ${p.gain}`);
   execCommand(`net_fakeloss ${p.loss}`);
   execCommand(`dsp_room ${p.env}`);
+  // No specific dsp_custom settings in presets, defaults remain
   
   state.sv_cheats = tempCheats;
-  logLine(`Preset "${cleanName}" loaded successfully.`, 'sys');
 }
 
+/* --- HELPERS --- */
 function printCvarList() {
   logLine('-------------- CVAR LIST --------------', 'sys');
   Object.keys(cvars).sort().forEach(k => {
-    logLine(`${k.padEnd(16)} : ${cvars[k].help}`, 'text');
+    logLine(`${k.padEnd(20)} : ${cvars[k].help}`, 'text');
   });
   logLine('---------------------------------------', 'sys');
 }
@@ -517,7 +565,6 @@ function printStatus() {
 }
 
 /* --- EVENT LISTENERS --- */
-// Safer button binding
 document.querySelectorAll('.preset-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const cmd = btn.getAttribute('data-cmd');
@@ -567,17 +614,11 @@ els.file.addEventListener('change', () => {
   }
 });
 
-els.env.addEventListener('change', () => {
-  const isCustom = els.env.value === 'custom';
-  els.customEnv.style.display = isCustom ? 'block' : 'none';
-});
-
 /* --- AUDIO PROCESSING --- */
 els.process.addEventListener('click', async () => {
   els.process.disabled = true; els.dl.setAttribute('disabled', 'true');
   logLine(`S_StartSound: initializing render...`);
-  logLine(`Allocating dsp_buffer [size=${document.getElementById('sr').value}]`);
-
+  
   try {
     const file = els.file.files[0];
     if(!file) throw new Error("No file loaded");
@@ -604,6 +645,8 @@ els.process.addEventListener('click', async () => {
     } else if (envConfigs[envChoice]) {
       [revDur, revDecay, revMix] = envConfigs[envChoice];
     }
+
+    logLine(`MIX: Rate=${targetRate}Hz, Reverb=${envChoice} (Mix: ${revMix.toFixed(2)})`);
 
     const extraTail = (revMix > 0) ? revDur * targetRate : 0;
     const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * targetRate) + extraTail, targetRate);
@@ -672,7 +715,7 @@ els.process.addEventListener('click', async () => {
   }
 });
 
-/* --- HELPERS --- */
+/* --- DSP UTILS --- */
 function makeDistortionCurve(amount) {
   if (amount <= 0) return new Float32Array([0, 0]);
   const k = amount, n = 44100, curve = new Float32Array(n), deg = Math.PI / 180;
@@ -736,7 +779,7 @@ function makeWav(data, rate) {
   return new Blob([buf], {type:'audio/wav'});
 }
 
-/* --- VISUALIZER LOOP --- */
+/* --- VISUALIZER --- */
 const ctx = els.canvas.getContext('2d', { alpha: false });
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -861,7 +904,7 @@ els.audio.addEventListener('seeking', drawScrubFrame);
 els.audio.addEventListener('seeked', drawScrubFrame);
 window.addEventListener('resize', () => { if(!state.isPlaying) drawStaticWaveform(); });
 
-// NetGraph Update
+/* --- NET GRAPH --- */
 let lastTime = performance.now(), frameCount = 0;
 function updateNetGraph() {
   requestAnimationFrame(updateNetGraph);
@@ -881,7 +924,7 @@ function updateNetGraph() {
 }
 updateNetGraph();
 
-// Boot sequence
+/* --- BOOT SEQUENCE --- */
 (function bootConsole() {
   const bootLogs = [
     { t: "Valve Software - Source Engine [ Build 22050 ]", c: 'text' },
