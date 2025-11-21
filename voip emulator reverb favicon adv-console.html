@@ -1,0 +1,998 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>TF2 Voice Emulator — Developer Console</title>
+  <link rel="icon" href="favicon.ico" type="image/x-icon">
+  <style>
+    :root {
+      --bg: #1b2838;
+      --card: #171a21;
+      --text: #c5d5e6;
+      --accent: #66c0f4;
+      --warn: #ff4040;
+      --btn-bg: #2a475e;
+      --border: #3e4853;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0; padding: 20px;
+      min-height: 100vh;
+      background: var(--bg); color: var(--text);
+      display: flex; justify-content: center; align-items: flex-start;
+    }
+
+    .card {
+      width: 100%; max-width: 900px;
+      background: var(--card);
+      border-radius: 8px; padding: 25px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      border: 1px solid #000;
+      position: relative;
+    }
+    
+    h1 { margin: 0 0 10px; font-size: clamp(20px, 5vw, 24px); font-weight: 300; letter-spacing: 1px; color: #fff; text-transform: uppercase; text-align: center; }
+    p { margin: 0 0 20px; font-size: 14px; color: #8f98a0; line-height: 1.5; text-align: center; }
+    
+    /* Upload Section */
+    .upload-row {
+      background: rgba(0,0,0,0.2); padding: 15px; border-radius: 6px;
+      display: flex; gap: 10px; align-items: center; margin-bottom: 20px;
+      border: 1px solid var(--border); flex-wrap: wrap;
+    }
+
+    input[type="file"] { flex-grow: 1; min-width: 200px; color: #ccc; font-size: 13px; }
+    input[type="file"]::file-selector-button {
+      background: var(--btn-bg); border: none; color: white;
+      padding: 8px 12px; border-radius: 4px; cursor: pointer; margin-right: 10px;
+    }
+
+    /* Buttons */
+    button, .button {
+      background: linear-gradient(to bottom, #a4d007 5%, #536904 95%);
+      border: none; color: #fff; padding: 12px 20px; border-radius: 4px;
+      cursor: pointer; text-decoration: none; font-size: 14px; font-weight: bold;
+      text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+      white-space: nowrap; flex-grow: 1; transition: transform 0.1s;
+    }
+    button:active, .button:active { transform: translateY(1px); }
+    button:disabled, .button[disabled] { background: #3d4450; color: #707984; cursor: not-allowed; pointer-events: none; box-shadow: none; }
+
+    /* Presets */
+    .preset-row { display: flex; gap: 8px; margin-bottom: 20px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    .preset-label { font-size: 12px; color: #888; width: 100%; text-align: center; margin-bottom: 4px; }
+    .preset-btn { background: var(--btn-bg); font-weight: normal; font-size: 13px; padding: 8px 16px; flex-grow: 1; }
+
+    /* Controls */
+    .controls { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .control { background: rgba(62, 76, 92, 0.2); padding: 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05); }
+    
+    label { display: block; font-size: 11px; font-weight: bold; color: var(--accent); margin-bottom: 8px; text-transform: uppercase; }
+    
+    input[type=number], input[type=range], select {
+      width: 100%; background: #0e1218; border: 1px solid #3e4853; color: white;
+      padding: 8px; border-radius: 4px; font-size: 14px;
+    }
+    select { cursor: pointer; }
+
+    /* Custom Reverb Panel */
+    #custom-env {
+      grid-column: 1 / -1; display: none;
+      background: rgba(0, 0, 0, 0.3); border: 1px solid var(--accent);
+    }
+    .custom-row { display: flex; gap: 15px; flex-wrap: wrap; }
+    .custom-col { flex: 1; min-width: 100px; }
+
+    /* Visualizer Wrapper */
+    .viz-container {
+      position: relative; width: 100%; height: 120px;
+      background: #000; border-radius: 6px; border: 1px solid #444;
+      overflow: hidden; margin-top: 15px;
+      box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+    }
+    
+    canvas { width: 100%; height: 100%; display: block; }
+
+    /* CRT Scanline Effect */
+    .scanlines {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2));
+      background-size: 100% 4px; pointer-events: none; z-index: 2; opacity: 0.6;
+    }
+    
+    audio { width: 100%; margin-top: 15px; height: 40px; filter: invert(0.9) hue-rotate(180deg); }
+
+    /* --- SOURCE ENGINE CONSOLE STYLES --- */
+    .console-wrapper {
+      margin-top: 20px;
+      background: rgba(40, 40, 40, 0.98);
+      border: 2px solid #555;
+      border-radius: 2px;
+      box-shadow: 0 0 15px rgba(0,0,0,0.8);
+      display: flex; flex-direction: column;
+      font-family: "Lucida Console", "Consolas", "Courier New", monospace;
+      font-size: 11px;
+    }
+
+    .console-output {
+      height: 200px; overflow-y: scroll; padding: 6px 8px;
+      color: #d1d1d1; line-height: 1.35;
+      background-image: linear-gradient(rgba(18,18,18,0.1) 50%, rgba(0,0,0,0.1) 50%);
+      background-size: 100% 4px;
+    }
+
+    .console-output::-webkit-scrollbar { width: 12px; background: #2b2b2b; }
+    .console-output::-webkit-scrollbar-thumb { background: #555; border: 2px solid #2b2b2b; }
+    .console-output::-webkit-scrollbar-thumb:hover { background: #777; }
+
+    /* Source Console Colors */
+    .c-text { color: #ccc; }
+    .c-cmd { color: #ffb822; font-weight: bold; } 
+    .c-val { color: #66c0f4; }
+    .c-err { color: #ff5555; }
+    .c-sys { color: #9ae66e; }
+    .c-help { color: #aaa; font-style: italic; margin-left: 10px;}
+
+    .console-input-row { display: flex; border-top: 1px solid #555; background: #333; }
+    .console-input-row span { padding: 8px 0 8px 8px; color: #aaa; font-weight: bold; user-select: none; }
+
+    #console-input {
+      flex-grow: 1; background: transparent; border: none; color: #fff;
+      font-family: inherit; font-size: inherit; padding: 8px; outline: none;
+    }
+
+    /* --- NET_GRAPH STYLES --- */
+    #net-graph {
+      display: none; /* Hidden by default, toggled via cvar */
+      position: absolute;
+      bottom: 250px; right: 30px;
+      text-align: right;
+      font-family: "Verdana", sans-serif;
+      font-size: 10px;
+      color: #fff;
+      text-shadow: 1px 1px 0 #000;
+      pointer-events: none;
+      line-height: 1.2;
+      z-index: 10;
+    }
+    .ng-fps { color: #a4d007; font-weight: bold; }
+    .ng-ping { color: #66c0f4; }
+    .ng-lerp { color: #ffb822; }
+    .ng-loss { color: #ff4040; }
+    .ng-bar {
+      display: inline-block; width: 100px; height: 2px; background: #444;
+      margin-left: 5px; position: relative; vertical-align: middle;
+    }
+    .ng-bar-fill {
+      position: absolute; left: 0; top: 0; bottom: 0;
+      background: #a4d007; width: 20%;
+    }
+    
+    footer { margin-top: 25px; font-size: 11px; color: #555; border-top: 1px solid #333; padding-top: 15px; text-align: center; }
+
+    @media (max-width: 600px) {
+      body { padding: 10px; }
+      .card { padding: 15px; }
+      .upload-row { flex-direction: column; align-items: stretch; }
+      .upload-row > * { width: 100%; margin-bottom: 5px; }
+      .controls { grid-template-columns: 1fr 1fr; }
+      #net-graph { bottom: 20px; right: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <!-- Authentic Net Graph Overlay -->
+    <div id="net-graph">
+      <div>fps: <span class="ng-fps" id="ng-fps">0</span> <span class="ng-bar"><span class="ng-bar-fill" id="ng-fill"></span></span></div>
+      <div>ping: <span class="ng-ping" id="ng-ping">5</span> ms</div>
+      <div>in : <span id="ng-in">128</span> 2.11 k/s</div>
+      <div>out: <span id="ng-out">64</span> 1.02 k/s</div>
+      <div>lerp: <span class="ng-lerp" id="ng-lerp">100.0</span> ms</div>
+      <div>loss: <span class="ng-loss" id="ng-loss-val">0</span> choke: 0</div>
+    </div>
+
+    <h1>TF2 Voice Emulator</h1>
+    <p>Source Engine Processing &amp; Artifacts</p>
+
+    <div class="upload-row">
+      <input id="file" type="file" accept="audio/*">
+      <button id="process" disabled>Process Audio</button>
+      <a id="download" class="button" download disabled>Download WAV</a>
+    </div>
+
+    <div class="preset-row">
+      <div class="preset-label">Quick Presets</div>
+      <button class="preset-btn" onclick="execCommand('exec preset_modern')">Authentic (Modern)</button>
+      <button class="preset-btn" onclick="execCommand('exec preset_legacy')">Legacy (2007 Era)</button>
+      <button class="preset-btn" onclick="execCommand('exec preset_spam')">Mic Spam (Loud)</button>
+    </div>
+
+    <div class="controls">
+      <div class="control">
+        <label>Rate (Hz) [host_framerate]</label>
+        <input id="sr" type="number" value="22050" step="50">
+      </div>
+
+      <div class="control">
+        <label>Mic Gain [voice_scale]</label>
+        <input id="gain" type="number" value="1.2" min="1.0" max="5.0" step="0.1">
+      </div>
+
+      <div class="control">
+        <label>Hi-Pass [dsp_hpf]</label>
+        <input id="hp" type="number" value="300" min="0" max="1000">
+      </div>
+
+      <div class="control">
+        <label>Lo-Pass [dsp_lpf]</label>
+        <input id="lp" type="number" value="6000" min="1000" max="20000">
+      </div>
+
+      <div class="control">
+        <label>Environment [dsp_room]</label>
+        <select id="env">
+          <option value="none">0 - Dry</option>
+          <option value="room">14 - Room</option>
+          <option value="locker">19 - Locker</option>
+          <option value="hall">22 - Hallway</option>
+          <option value="custom">99 - Custom</option>
+        </select>
+      </div>
+
+      <div id="custom-env" class="control">
+        <label style="margin-bottom:12px; border-bottom:1px solid #444; padding-bottom:4px;">dsp_custom settings</label>
+        <div class="custom-row">
+          <div class="custom-col">
+             <label>Time</label>
+             <input id="c_dur" type="number" value="1.5" step="0.1">
+          </div>
+          <div class="custom-col">
+             <label>Decay</label>
+             <input id="c_dec" type="number" value="3.0" step="0.1">
+          </div>
+          <div class="custom-col">
+             <label>Mix</label>
+             <input id="c_mix" type="number" value="25">
+          </div>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Bit Depth [snd_bits]</label>
+        <input id="bits" type="number" value="16" min="4" max="16">
+      </div>
+
+      <div class="control">
+        <label>Packet Size [net_split]</label>
+        <input id="frameMs" type="number" value="20" min="10" max="100">
+      </div>
+
+      <div class="control">
+        <label>Loss % [net_fakeloss]</label>
+        <input id="loss" type="number" value="0" min="0" max="40">
+      </div>
+    </div>
+
+    <div class="viz-container">
+      <div class="scanlines"></div>
+      <canvas id="visualizer"></canvas>
+    </div>
+
+    <audio id="preview" controls crossorigin="anonymous"></audio>
+    
+    <!-- Source Engine Console -->
+    <div class="console-wrapper">
+      <div id="console-out" class="console-output"></div>
+      <div class="console-input-row">
+        <span>]</span>
+        <input type="text" id="console-input" placeholder="type 'find', 'volume', or 'help'..." autocomplete="off">
+      </div>
+    </div>
+
+    <footer>
+      Local Browser Processing | Valve Software - Source Engine Simulation
+    </footer>
+  </div>
+
+<script>
+/* --- GLOBAL ELEMENTS & CONFIG --- */
+const els = {
+  file: document.getElementById('file'),
+  process: document.getElementById('process'),
+  dl: document.getElementById('download'),
+  audio: document.getElementById('preview'),
+  canvas: document.getElementById('visualizer'),
+  gain: document.getElementById('gain'),
+  env: document.getElementById('env'),
+  customEnv: document.getElementById('custom-env'),
+  conOut: document.getElementById('console-out'),
+  conIn: document.getElementById('console-input'),
+  ng: document.getElementById('net-graph'),
+  ngFps: document.getElementById('ng-fps'),
+  ngPing: document.getElementById('ng-ping'),
+  ngLerp: document.getElementById('ng-lerp'),
+  ngFill: document.getElementById('ng-fill'),
+  ngLoss: document.getElementById('ng-loss-val')
+};
+
+const presets = {
+  modern: { sr: 22050, hp: 300, lp: 6000, bits: 16, gain: 1.2, loss: 0, env: 'none' },
+  legacy: { sr: 11025, hp: 400, lp: 3500, bits: 8,  gain: 2.5, loss: 0, env: 'room' },
+  spam:   { sr: 22050, hp: 200, lp: 12000, bits: 12, gain: 12.0, loss: 0, env: 'none' }
+};
+
+const envConfigs = {
+  none:   null,
+  room:   [0.5, 3.0, 0.15],
+  locker: [0.3, 8.0, 0.25],
+  hall:   [1.5, 4.0, 0.35]
+};
+
+let state = {
+  lastBlob: null,
+  processedBuffer: null,
+  audioCtx: null,
+  analyser: null,
+  isPlaying: false,
+  animationId: null,
+  sv_cheats: 0,
+  cmdHistory: [],
+  cmdIndex: -1,
+  mapName: 'cp_process'
+};
+
+/* --- CVAR FLAGS --- */
+const FCVAR = {
+  NONE: 0,
+  CHEAT: 1 << 0,
+  READONLY: 1 << 1
+};
+
+/* --- CVAR REGISTRY --- */
+const cvars = {
+  'clear': { help: 'Clear the console output', action: () => els.conOut.innerHTML = '' },
+  'help': { help: 'Show command list', action: () => execCommand('cvarlist') },
+  'cvarlist': { help: 'List available console commands', action: printCvarList },
+  'status': { help: 'Display map and connection status', action: printStatus },
+  'quit': { help: 'Exit the engine', action: () => { logLine('Disconnect: Client disconnect'); els.audio.pause(); } },
+  'exec': { help: 'Execute a preset config', action: runPreset },
+  'sv_cheats': { 
+    val: 0, help: 'Enable cheats/dev limits', 
+    action: (v) => { 
+      state.sv_cheats = parseInt(v); 
+      if(state.sv_cheats === 1) {
+        document.getElementById('gain').removeAttribute('max');
+        document.getElementById('loss').removeAttribute('max');
+        logLine('Dev limits removed. God speed.');
+      } else {
+        document.getElementById('gain').setAttribute('max', '5.0');
+        logLine('Cheats disabled.');
+      }
+    }
+  },
+  'net_graph': { 
+    val: 0, help: 'Draw the network usage graph', 
+    action: (v) => { els.ng.style.display = (parseInt(v) > 0) ? 'block' : 'none'; } 
+  },
+  'volume': {
+    val: 1.0, help: 'Audio playback volume (0.0 - 1.0)',
+    action: (v) => {
+      const val = parseFloat(v);
+      if (isNaN(val)) {
+        logLine(`Current volume: ${els.audio.volume.toFixed(2)}`, 'text');
+        return;
+      }
+      els.audio.volume = Math.min(1, Math.max(0, val));
+    }
+  },
+  'play': { help: 'Start playback', action: () => els.audio.play().catch(e => logLine(e.message, 'err')) },
+  'stop': { help: 'Stop playback', action: () => { els.audio.pause(); els.audio.currentTime = 0; } },
+  'restart': { help: 'Restart playback', action: () => { els.audio.currentTime = 0; els.audio.play(); } },
+  'echo': { help: 'Echo text to console', action: (v) => logLine(v || "") },
+  'find': {
+    help: 'Find console commands with the specified string',
+    action: (v) => {
+      if(!v) return logLine("Usage: find <string>", "err");
+      logLine(`Searching for: ${v}`, 'sys');
+      Object.keys(cvars).filter(k => k.includes(v.toLowerCase())).forEach(k => {
+        logLine(`${k.padEnd(16)} : ${cvars[k].help}`, 'text');
+      });
+    }
+  },
+  'map': { help: 'Set map name (status flavor)', action: (v) => { if(v) state.mapName = v; } },
+  'screenshot': {
+    help: 'Save visualizer to file',
+    action: () => {
+      const link = document.createElement('a');
+      link.download = `tf2_viz_${Date.now()}.png`;
+      link.href = els.canvas.toDataURL();
+      link.click();
+      logLine(`Wrote ${link.download}`, 'sys');
+    }
+  },
+  
+  // Linked Inputs
+  'voice_scale': { help: 'Microphone gain boost', link: 'gain', flags: FCVAR.CHEAT },
+  'host_framerate': { help: 'Audio sample rate (Hz)', link: 'sr' },
+  'dsp_hpf': { link: 'hp', help: 'High pass filter cutoff' },
+  'dsp_lpf': { link: 'lp', help: 'Low pass filter cutoff' },
+  'snd_bits': { link: 'bits', help: 'Output bit depth' },
+  'net_fakeloss': { link: 'loss', help: 'Simulated packet loss percentage' },
+  'net_split': { link: 'frameMs', help: 'Packet size in milliseconds' },
+  'dsp_room': { 
+    help: 'Reverb environment preset',
+    action: (v) => {
+      const opts = ['none', 'room', 'locker', 'hall', 'custom'];
+      // Handle numeric index or string
+      if(parseInt(v) < 5 && parseInt(v) >= 0) els.env.value = opts[parseInt(v)];
+      else if(opts.includes(v)) els.env.value = v;
+      else logLine(`Invalid environment. Use: ${opts.join(', ')}`, 'err');
+      els.env.dispatchEvent(new Event('change'));
+    }
+  }
+};
+
+/* --- CONSOLE ENGINE --- */
+function logLine(text, type = 'text') {
+  const div = document.createElement('div');
+  div.className = `c-${type}`;
+  div.textContent = text; // Security: Use textContent to prevent injection
+  els.conOut.appendChild(div);
+  els.conOut.scrollTop = els.conOut.scrollHeight;
+}
+
+// Source Engine Argument Tokenizer (Handles quotes)
+function tokenize(str) {
+  const regex = /[^\s"]+|"([^"]*)"/g;
+  const args = [];
+  let match;
+  while ((match = regex.exec(str)) != null) {
+    args.push(match[1] ? match[1] : match[0]);
+  }
+  return args;
+}
+
+function execCommand(rawStr) {
+  if (!rawStr || !rawStr.trim()) return;
+  const tokens = tokenize(rawStr);
+  const cmdName = tokens[0].toLowerCase();
+  const arg = tokens.length > 1 ? tokens[1] : undefined; // Simple handling, advanced cmds might need more
+  
+  logLine(`] ${rawStr}`);
+
+  const cvar = cvars[cmdName];
+  if (cvar) {
+    // Check Cheats
+    if ((cvar.flags & FCVAR.CHEAT) && state.sv_cheats === 0) {
+      logLine(`Can't use cheat command "${cmdName}" in multiplayer, unless the server has sv_cheats set to 1.`, 'err');
+      return;
+    }
+
+    if (cvar.link) {
+      const el = document.getElementById(cvar.link);
+      if (arg !== undefined) {
+        el.value = arg;
+        logLine(`"${cmdName}" = "${arg}"`, 'val');
+      } else {
+        logLine(`"${cmdName}" = "${el.value}"`, 'text');
+        logLine(` - ${cvar.help}`, 'help');
+      }
+    } else if (cvar.action) {
+      if (arg !== undefined) {
+        cvar.action(arg);
+        // Update internal val if it exists to match user input
+        if(cvar.val !== undefined) {
+           cvar.val = arg;
+           logLine(`"${cmdName}" = "${arg}"`, 'val');
+        }
+      } else {
+        // Run action with undefined to potentially trigger status print
+        cvar.action(undefined);
+        // If command is just a trigger, don't print val unless it has one
+        if (cvar.val !== undefined) {
+            logLine(`"${cmdName}" = "${cvar.val}"`, 'text');
+        }
+      }
+    }
+  } else {
+    logLine(`Unknown command "${cmdName}"`, 'err');
+  }
+}
+
+function printCvarList() {
+  logLine('-------------- CVAR LIST --------------', 'sys');
+  Object.keys(cvars).sort().forEach(k => {
+    logLine(`${k.padEnd(16)} : ${cvars[k].help}`, 'text');
+  });
+  logLine('---------------------------------------', 'sys');
+}
+
+function printStatus() {
+  logLine(`hostname: Local Browser Environment`);
+  logLine(`version : 1.0.0.24  / 24 22050 secure`);
+  logLine(`map     : ${state.mapName} at: 0 x, 0 y, 0 z`);
+  if(els.file.files.length) {
+    const f = els.file.files[0];
+    logLine(`# userid name                uniqueid            connected ping loss state`);
+    logLine(`#      1 "${f.name}"      ${f.size}bytes    00:00       5    0 active`);
+  } else {
+    logLine(`No file loaded.`, 'err');
+  }
+}
+
+function runPreset(name) {
+  // Handle "exec preset_modern" or just "preset_modern"
+  const cleanName = name.replace('exec ', '').replace('preset_', '');
+  const p = presets[cleanName];
+  if(!p) {
+    logLine(`Error: preset "${name}" not found.`, 'err');
+    return;
+  }
+  
+  logLine(`exec user_presets/${cleanName}.cfg`, 'cmd');
+  
+  // Force cheat cvar changes even if sv_cheats is 0 for presets (Engine quirk simulation)
+  const tempCheats = state.sv_cheats;
+  state.sv_cheats = 1; 
+  
+  execCommand(`host_framerate ${p.sr}`);
+  execCommand(`dsp_hpf ${p.hp}`);
+  execCommand(`dsp_lpf ${p.lp}`);
+  execCommand(`snd_bits ${p.bits}`);
+  execCommand(`voice_scale ${p.gain}`);
+  execCommand(`net_fakeloss ${p.loss}`);
+  execCommand(`dsp_room ${p.env}`);
+  
+  state.sv_cheats = tempCheats;
+}
+
+/* --- INPUT HANDLER --- */
+els.conIn.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const val = els.conIn.value;
+    if (val) {
+      state.cmdHistory.push(val);
+      state.cmdIndex = state.cmdHistory.length;
+      execCommand(val);
+      els.conIn.value = '';
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (state.cmdIndex > 0) {
+      state.cmdIndex--;
+      els.conIn.value = state.cmdHistory[state.cmdIndex];
+    }
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (state.cmdIndex < state.cmdHistory.length - 1) {
+      state.cmdIndex++;
+      els.conIn.value = state.cmdHistory[state.cmdIndex];
+    } else {
+      state.cmdIndex = state.cmdHistory.length;
+      els.conIn.value = '';
+    }
+  } else if (e.key === 'Tab') {
+    e.preventDefault();
+    const val = els.conIn.value;
+    if (!val) return;
+    
+    const matches = Object.keys(cvars).filter(k => k.startsWith(val.toLowerCase()));
+    if (matches.length === 1) {
+      els.conIn.value = matches[0] + " ";
+    } else if (matches.length > 1) {
+      logLine(`> ${matches.join(', ')}`, 'help');
+    }
+  }
+});
+
+/* --- NET GRAPH LOOP --- */
+let lastTime = performance.now();
+let frameCount = 0;
+function updateNetGraph() {
+  requestAnimationFrame(updateNetGraph);
+  const now = performance.now();
+  frameCount++;
+  if (now - lastTime >= 500) { 
+    const fps = Math.round(frameCount * 2);
+    els.ngFps.textContent = fps;
+    const lerpBase = parseFloat(document.getElementById('frameMs').value) * 2;
+    els.ngLerp.textContent = (lerpBase + (Math.random()*2)).toFixed(1);
+    els.ngPing.textContent = Math.floor(Math.random() * 15) + 5;
+    
+    // Optimized DOM updates
+    const fillPct = Math.min(100, (fps / 60) * 100);
+    els.ngFill.style.width = fillPct + '%';
+    els.ngFill.style.background = (fps < 30) ? '#ff4040' : '#a4d007';
+    els.ngLoss.textContent = document.getElementById('loss').value;
+
+    frameCount = 0;
+    lastTime = now;
+  }
+}
+updateNetGraph();
+
+/* --- AUDIO & VISUALIZER LOGIC --- */
+els.env.addEventListener('change', () => {
+  const isCustom = els.env.value === 'custom';
+  els.customEnv.style.display = isCustom ? 'block' : 'none';
+});
+
+els.file.addEventListener('change', () => {
+  els.process.disabled = !els.file.files.length;
+  if(els.file.files.length) {
+    const f = els.file.files[0];
+    logLine(`FS_MountFile: "${f.name}" (${(f.size/1024).toFixed(1)} KB) mounted.`, 'sys');
+  }
+});
+
+const ctx = els.canvas.getContext('2d', { alpha: false }); // Optimization
+
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = els.canvas.getBoundingClientRect();
+  if(els.canvas.width !== rect.width * dpr || els.canvas.height !== rect.height * dpr) {
+      els.canvas.width = rect.width * dpr;
+      els.canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+  }
+  return { w: rect.width, h: rect.height };
+}
+
+function drawGrid(w, h) {
+  ctx.fillStyle = '#000'; // Clear with color instead of clearRect for alpha:false optimization
+  ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, h/2); ctx.lineTo(w, h/2);
+  ctx.moveTo(0, h/4); ctx.lineTo(w, h/4);
+  ctx.moveTo(0, h*0.75); ctx.lineTo(w, h*0.75);
+  ctx.stroke();
+}
+
+// 1. Standard Playback Animation
+function animateSpectrum() {
+  if(!state.isPlaying) return;
+  const { w, h } = resizeCanvas();
+  const bufferLength = state.analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  state.analyser.getByteFrequencyData(dataArray);
+  
+  drawGrid(w, h);
+
+  const barWidth = (w / bufferLength) * 2.5;
+  let x = 0;
+  let sum = 0;
+  for(let i=0; i<bufferLength; i++) sum += dataArray[i];
+  const isLoud = (sum/bufferLength) > 60; 
+  
+  for(let i = 0; i < bufferLength; i++) {
+    let barHeight = (dataArray[i] / 255) * h;
+    ctx.fillStyle = (isLoud && barHeight > h*0.6) ? 
+      `rgb(${barHeight + 100}, 50, 50)` : `rgb(${50}, ${barHeight + 100}, 240)`;
+    ctx.fillRect(x, h - barHeight, barWidth, barHeight);
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(x, h - barHeight, barWidth, 2);
+    x += barWidth + 1;
+  }
+  state.animationId = requestAnimationFrame(animateSpectrum);
+}
+
+// 2. Static Waveform (Optimized Downsampling)
+function drawStaticWaveform() {
+  if(!state.processedBuffer) return;
+  const { w, h } = resizeCanvas();
+  const data = state.processedBuffer;
+  
+  drawGrid(w, h);
+
+  ctx.fillStyle = '#66c0f4';
+  
+  // Optimization: Don't iterate every sample for large files
+  const step = Math.max(1, Math.ceil(data.length / w));
+  const amp = h / 2;
+
+  ctx.beginPath();
+  for(let i = 0; i < w; i++){
+    let min = 1.0, max = -1.0;
+    // Sample a chunk
+    const startIdx = i * step;
+    // Optimization: limit lookahead loop
+    const endIdx = Math.min(startIdx + step, data.length);
+    
+    for(let j=startIdx; j<endIdx; j++){
+      const val = data[j];
+      if(val < min) min = val;
+      if(val > max) max = val;
+    }
+    if(max < min) { min=0; max=0; } // Silence
+    
+    const yTop = (1 - max) * amp;
+    const yBot = (1 - min) * amp;
+    // Draw single pixel wide strip
+    ctx.fillRect(i, yTop, 1, Math.max(1, yBot - yTop));
+  }
+}
+
+// 3. Scrub Frame (DFT)
+function performDFT(buffer, start, N, K) {
+  const out = new Float32Array(K);
+  if (start + N >= buffer.length) return out;
+  const twoPi = 2 * Math.PI;
+  
+  for (let k = 0; k < K; k++) {
+    let r = 0, i = 0;
+    for (let n = 0; n < N; n++) {
+      const x = buffer[start + n];
+      const w = 0.5 * (1 - Math.cos((twoPi * n) / (N - 1)));
+      const wx = x * w;
+      const theta = (twoPi * k * n) / N;
+      r += wx * Math.cos(theta);
+      i += wx * Math.sin(theta);
+    }
+    out[k] = Math.sqrt(r*r + i*i);
+  }
+  return out;
+}
+
+function drawScrubFrame() {
+  if(state.isPlaying || !state.processedBuffer) return;
+
+  const { w, h } = resizeCanvas();
+  drawGrid(w, h);
+
+  const pct = els.audio.currentTime / els.audio.duration;
+  if(!isFinite(pct) || pct < 0 || pct > 1) return;
+
+  const bufferIdx = Math.floor(pct * state.processedBuffer.length);
+  const fftSize = 256; 
+  const binCount = 128;
+  
+  const freqs = performDFT(state.processedBuffer, bufferIdx, fftSize, binCount);
+  const barWidth = (w / binCount) * 2.5;
+  let x = 0;
+
+  for (let i = 0; i < binCount; i++) {
+    const mag = freqs[i]; 
+    const val = Math.min(1.0, mag * 3.5); 
+    const barHeight = val * h;
+    const isLoud = barHeight > h * 0.6;
+    
+    ctx.fillStyle = isLoud ? 
+      `rgb(${barHeight + 100}, 50, 50)` : 
+      `rgb(50, ${barHeight + 100}, 240)`;
+
+    ctx.fillRect(x, h - barHeight, barWidth, barHeight);
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillRect(x, h - barHeight, barWidth, 2);
+    x += barWidth + 1;
+  }
+}
+
+/* --- MEDIA EVENT BINDINGS --- */
+els.audio.addEventListener('play', () => {
+  if(!state.audioCtx) initAudioContext();
+  if(state.audioCtx.state === 'suspended') state.audioCtx.resume();
+  state.isPlaying = true;
+  cancelAnimationFrame(state.animationId);
+  animateSpectrum();
+});
+
+els.audio.addEventListener('pause', () => { 
+  state.isPlaying = false; 
+  cancelAnimationFrame(state.animationId); 
+  drawScrubFrame(); 
+});
+
+els.audio.addEventListener('ended', () => { 
+  state.isPlaying = false; 
+  cancelAnimationFrame(state.animationId); 
+  drawStaticWaveform(); 
+});
+
+els.audio.addEventListener('seeking', drawScrubFrame);
+els.audio.addEventListener('seeked', drawScrubFrame);
+
+function initAudioContext() {
+  state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  state.analyser = state.audioCtx.createAnalyser();
+  state.analyser.fftSize = 256;
+  state.sourceNode = state.audioCtx.createMediaElementSource(els.audio);
+  state.sourceNode.connect(state.analyser);
+  state.analyser.connect(state.audioCtx.destination);
+}
+
+/* --- PROCESSING LOGIC --- */
+els.process.addEventListener('click', async () => {
+  els.process.disabled = true; els.dl.setAttribute('disabled', 'true');
+  logLine(`S_StartSound: initializing render...`);
+  logLine(`Allocating dsp_buffer [size=${document.getElementById('sr').value}]`);
+
+  try {
+    const file = els.file.files[0];
+    const arrayBuffer = await file.arrayBuffer();
+    const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const decoded = await tempCtx.decodeAudioData(arrayBuffer);
+    
+    const monoRaw = new Float32Array(decoded.length);
+    if (decoded.numberOfChannels === 1) monoRaw.set(decoded.getChannelData(0));
+    else {
+      const ch0 = decoded.getChannelData(0);
+      const ch1 = decoded.getChannelData(1);
+      for(let i=0; i<decoded.length; i++) monoRaw[i] = (ch0[i] + ch1[i]) / 2;
+    }
+
+    const targetRate = parseInt(document.getElementById('sr').value);
+    const envChoice = els.env.value;
+    
+    let revDur = 0, revDecay = 0, revMix = 0;
+    if (envChoice === 'custom') {
+      revDur = Number(document.getElementById('c_dur').value);
+      revDecay = Number(document.getElementById('c_dec').value);
+      revMix = Number(document.getElementById('c_mix').value) / 100;
+    } else if (envConfigs[envChoice]) {
+      [revDur, revDecay, revMix] = envConfigs[envChoice];
+    }
+
+    const extraTail = (revMix > 0) ? revDur * targetRate : 0;
+    const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * targetRate) + extraTail, targetRate);
+    
+    const src = offline.createBufferSource();
+    const buf = offline.createBuffer(1, monoRaw.length, decoded.sampleRate);
+    buf.copyToChannel(monoRaw, 0, 0);
+    src.buffer = buf;
+
+    const hp = offline.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = Number(document.getElementById('hp').value);
+    const lp = offline.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = Number(document.getElementById('lp').value);
+    
+    const dist = offline.createWaveShaper();
+    const gainVal = Number(document.getElementById('gain').value);
+    dist.curve = makeDistortionCurve((gainVal - 1) * 20);
+
+    const comp = offline.createDynamicsCompressor();
+    comp.threshold.value = -12; comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
+
+    src.connect(hp); hp.connect(dist); dist.connect(lp);
+
+    if (revMix > 0) {
+      const conv = offline.createConvolver();
+      conv.buffer = makeImpulse(offline, revDur, revDecay);
+      const wetGain = offline.createGain(); wetGain.gain.value = revMix;
+      const dryGain = offline.createGain(); dryGain.gain.value = 1.0; 
+      lp.connect(dryGain); dryGain.connect(comp);
+      lp.connect(conv); conv.connect(wetGain); wetGain.connect(comp);
+    } else {
+      lp.connect(comp);
+    }
+
+    comp.connect(offline.destination);
+    src.start(0);
+    const rendered = await offline.startRendering();
+    let samples = rendered.getChannelData(0);
+
+    const bits = Number(document.getElementById('bits').value);
+    const loss = Number(document.getElementById('loss').value);
+    const frameMs = Number(document.getElementById('frameMs').value);
+    
+    samples = quantize(samples, bits);
+    samples = applyPacketLoss(samples, targetRate, frameMs, loss);
+
+    state.processedBuffer = samples;
+    const wavBlob = makeWav(samples, targetRate);
+    if(state.lastBlob) URL.revokeObjectURL(state.lastBlob);
+    state.lastBlob = URL.createObjectURL(wavBlob);
+    
+    els.audio.src = state.lastBlob;
+    els.dl.href = state.lastBlob;
+    els.dl.download = file.name.replace(/\.[^/.]+$/, "") + "_tf2.wav";
+    els.dl.removeAttribute('disabled');
+
+    drawStaticWaveform();
+    logLine(`ChangeLevel: Local audio blob created.`, 'sys');
+    logLine(`Net_SendPacket: reliable stream ready.`);
+
+  } catch(e) {
+    console.error(e);
+    logLine(`CModelLoader::Map_IsValid: ${e.message}`, 'err');
+  } finally {
+    els.process.disabled = false;
+  }
+});
+
+function makeDistortionCurve(amount) {
+  if (amount <= 0) return new Float32Array([0, 0]);
+  const k = amount, n = 44100, curve = new Float32Array(n), deg = Math.PI / 180;
+  for (let i = 0; i < n; ++i) {
+    let x = i * 2 / n - 1;
+    curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
+  }
+  return curve;
+}
+
+function makeImpulse(ctx, duration, decay) {
+  const rate = ctx.sampleRate;
+  const len = rate * duration;
+  const buffer = ctx.createBuffer(1, len, rate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    data[i] = ((Math.random() * 2) - 1) * Math.pow(1 - (i / len), decay);
+  }
+  return buffer;
+}
+
+function quantize(data, bits) {
+  if(bits >= 32) return data;
+  const step = Math.pow(2, bits);
+  for(let i=0; i<data.length; i++) data[i] = Math.floor(data[i]*step)/step;
+  return data;
+}
+
+function applyPacketLoss(data, rate, ms, pct) {
+  if(pct <= 0) return data;
+  const frameSz = Math.floor(rate * (ms/1000));
+  const out = new Float32Array(data.length);
+  let last = 0;
+  for(let off=0; off<data.length; off+=frameSz) {
+    const lost = Math.random()*100 < pct;
+    for(let i=0; i<frameSz; i++) {
+      if(off+i >= data.length) break;
+      if(lost) out[off+i] = last; 
+      else { out[off+i] = data[off+i]; last = data[off+i]; }
+    }
+  }
+  return out;
+}
+
+function makeWav(data, rate) {
+  const buf = new ArrayBuffer(44 + data.length*2);
+  const view = new DataView(buf);
+  const writeStr = (o, s) => { for(let i=0;i<s.length;i++) view.setUint8(o+i, s.charCodeAt(i)); };
+  
+  writeStr(0, 'RIFF'); view.setUint32(4, 36+data.length*2, true); writeStr(8, 'WAVE');
+  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, rate, true); view.setUint32(28, rate*2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeStr(36, 'data');
+  view.setUint32(40, data.length*2, true);
+
+  let offset = 44;
+  for(let i=0; i<data.length; i++, offset+=2) {
+    let s = Math.max(-1, Math.min(1, data[i]));
+    view.setInt16(offset, s<0 ? s*0x8000 : s*0x7FFF, true);
+  }
+  return new Blob([buf], {type:'audio/wav'});
+}
+
+window.addEventListener('resize', () => {
+  if(state.isPlaying) return;
+  drawStaticWaveform();
+});
+
+(function bootConsole() {
+  const bootLogs = [
+    { t: "Valve Software - Source Engine [ Build 22050 ]", c: 'text' },
+    { t: "Heap: 256.00 Mb", c: 'text' },
+    { t: "Parsed 358 text messages", c: 'text' },
+    { t: "execing autoexec.cfg", c: 'text' },
+    { t: "cc_lang_listener: loading linguistics_en.txt", c: 'text' },
+    { t: "Sound System: Init (2 channels, 16bit)", c: 'sys' },
+    { t: "sv_voicecodec: vaudio_celt", c: 'cmd' },
+    { t: "Parallel processing initialized", c: 'text' },
+    { t: "System Ready.", c: 'sys' }
+  ];
+  let delay = 0;
+  bootLogs.forEach(line => {
+    setTimeout(() => logLine(line.t, line.c), delay);
+    delay += Math.random() * 150 + 50;
+  });
+})();
+</script>
+</body>
+</html>
